@@ -115,18 +115,21 @@ flowchart LR
 ```
 .
 ├── README.md
-├── Cargo.toml, Cargo.lock, rustfmt.toml   ← Rust project
+├── Cargo.toml, Cargo.lock, rustfmt.toml   ← Rust workspace
+├── Makefile                               ← common commands (make help)
+├── .github/workflows/ci.yml               ← CI
 ├── Dockerfile, .dockerignore              ← image of the Router service
-├── docker-compose.yml                     ← local (optional PostgreSQL with --profile db)
-├── docker-compose.production.yml          ← production (external PostgreSQL, HTTPS)
+├── docker-compose.dev.yml                 ← development (Router, nginx, PostgreSQL)
+├── docker-compose.prod.yml                ← production (external PostgreSQL, HTTPS)
+├── crates/api-contracts/                  ← OpenAPI contract crate (workspace member)
 ├── .env.example                           ← configuration template, copy to .env
 ├── docs/DEPLOYMENT.md                     ← this file
 ├── deploy/                                ← everything needed to run, no code
 │   ├── certs/                             ← extra CA certificates (*.crt)
 │   └── nginx/
 │       ├── watch-maps.sh                  ← runs nginx, reloads it when a map changes, writes CORS/CA files
-│       ├── local/        nginx.conf, tenants/_proxy.conf, tenants/backends.map (static, normally empty)
-│       └── production/   nginx.conf, tenants/_proxy.conf, tenants/backends.map (static, normally empty)
+│       ├── dev/          nginx.conf, tenants/_proxy.conf, tenants/backends.map (static, normally empty)
+│       └── prod/         nginx.conf, tenants/_proxy.conf, tenants/backends.map (static, normally empty)
 └── src/                                   ← Rust code, one folder per feature
     ├── main.rs        CLI commands, start-up
     ├── app.rs         wires everything and runs the server, scheduler and stream sync
@@ -134,6 +137,7 @@ flowchart LR
     ├── settings.rs    environment variables (.env)
     ├── state.rs       state shared by the handlers
     ├── outbound.rs    HTTP client for Microsoft endpoints (proxy, CA bundle)
+    ├── metrics.rs     Prometheus metrics
     ├── routing/       the public API by-id-token / by-agent-id
     │   └── aad.rs     Microsoft ID-token validation (cached keys)
     ├── admin/         page /admin/ and API /api/v1/admin/*
@@ -158,11 +162,11 @@ flowchart LR
     │   ├── backends.rs    table tenant_backend
     │   ├── mappings.rs    user/agent claims, stream cursors, conflicts
     │   └── jobs.rs        schedules and run history
-    └── http/          server assembly, DRF-compatible request/error helpers
+    └── http/          server assembly, middleware, request parsing and error bodies
 ```
 
-`api-contracts-rs/` holds the `api-contracts` crate (Rust port of `drf-api-contracts`), referenced from
-`Cargo.toml` with `path`.
+`crates/api-contracts/` holds the OpenAPI contract crate (Rust port of `drf-api-contracts`), a member of the
+Cargo workspace.
 
 ---
 
@@ -173,8 +177,8 @@ Requirements: Docker Engine + Docker Compose v2. The first build downloads Rust 
 ```bash
 cp .env.example .env
 # edit .env: at least ADMIN_PASSWORD and ROUTING_SYNC_TOKEN
-docker compose --profile db up -d --build        # without --profile db when DATABASE_URL points elsewhere
-docker compose logs -f tenant_resolver nginx
+make dev-up        # docker compose -f docker-compose.dev.yml up -d --build
+make dev-logs
 ```
 
 | Open | Expected |
@@ -202,14 +206,14 @@ docker compose logs -f tenant_resolver nginx
 
 ## 5. Configuration (`.env`)
 
-Every setting lives in `.env`. **After a change run `docker compose up -d`**: Compose sees the new values and
-recreates the container (if not, `docker compose up -d --force-recreate tenant_resolver`).
+Every setting lives in `.env`. **After a change run `docker compose -f docker-compose.<env>.yml up -d`**: Compose sees the new values and
+recreates the container (if not, `docker compose up -d --force-recreate router`).
 
 | Variable | Required | Meaning |
 |---|---|---|
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | yes (for admin) | admin account. Without both, the admin is disabled (API answers 503) |
 | `DATABASE_URL` | yes | `postgres://user:pass@host:5432/db` |
-| `POSTGRES_USER/PASSWORD/DB` | local | database of the bundled `postgres` service (`--profile db`) |
+| `POSTGRES_USER/PASSWORD/DB` | dev | database of the `postgres` service of `docker-compose.dev.yml` (which sets `DATABASE_URL` itself) |
 | `AAD_AUDIENCE`, `AAD_JWKS_URL` | no | ID-token audience (= frontend client ID) and Microsoft keys |
 | `HTTPS_PROXY` | no | outbound proxy for Microsoft endpoints |
 | `CORS_ALLOWED_ORIGINS` | production | frontend origin(s), comma separated; nginx answers CORS for them |
@@ -399,7 +403,7 @@ Wrong account: `401 {"detail": "Invalid username or password."}`. No account in 
 The OpenAPI 3.1 document is generated from the `api-contracts` crate (`src/openapi/mod.rs`).
 
 ```bash
-docker compose run --rm tenant_resolver openapi > openapi.json            # no database needed
+make openapi                                                             # no database needed
 curl -u admin:secret http://localhost:8080/openapi.json -o openapi.json   # over HTTP (admin account)
 ```
 
@@ -431,7 +435,7 @@ and, in production, verifies the backend certificate against the system CAs plus
 ### 8.1 Server preparation
 1. Install Docker + Compose v2 and copy the repository to the server.
 2. Put the HTTPS certificate in `ssl_certificates/` (`another-host.com.pem` and `.key`, or edit the names and the
-   `server_name` in `deploy/nginx/production/nginx.conf`). The folder is not in git.
+   `server_name` in `deploy/nginx/prod/nginx.conf`). The folder is not in git.
 3. Create `.env` from `.env.example`:
    - `ADMIN_PASSWORD`: a strong password;
    - `DATABASE_URL`: the production PostgreSQL;
@@ -439,7 +443,7 @@ and, in production, verifies the backend certificate against the system CAs plus
    - `AAD_AUDIENCE`: the frontend's client ID;
    - the sync credential (section 5.1);
    - remove the `POSTGRES_*` lines (production does not run PostgreSQL in Docker).
-4. Keep `deploy/nginx/production/tenants/backends.map` **empty** (comments only); the backend URLs are set on the
+4. Keep `deploy/nginx/prod/tenants/backends.map` **empty** (comments only); the backend URLs are set on the
    admin page.
 
 ### 8.2 Reusing the Django database
@@ -460,11 +464,11 @@ pg_dump "$DATABASE_URL" > backup_before_router.sql
 ### 8.3 Switch-over
 ```bash
 # stop the old Django stack (in the old repository)
-docker compose -f docker-compose.production.yml down
+docker compose -f docker-compose.prod.yml down
 
 # start the Router (in this repository)
-docker compose -f docker-compose.production.yml up -d --build
-docker compose -f docker-compose.production.yml logs -f tenant_resolver
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml logs -f router
 ```
 
 The log shows `schedule created` (first start), `sync leadership acquired`, `scheduler started` and
@@ -488,18 +492,19 @@ stack on the same database. The `django_celery_beat_*` tables still hold the old
 
 ## 9. Daily operations
 
-| Task | Command (production: add `-f docker-compose.production.yml`) |
+| Task | Command (add `-f docker-compose.prod.yml` or `-f docker-compose.dev.yml`, or use `make prod-*` / `make dev-*`) |
 |---|---|
-| Logs | `docker compose logs -f tenant_resolver` |
-| Restart | `docker compose restart tenant_resolver` |
+| Logs | `docker compose logs -f router` |
+| Restart | `docker compose restart router` |
 | Update | `git pull && docker compose up -d --build` |
 | Change the admin password | edit `.env` → `docker compose up -d` |
 | Add / edit / delete a backend | admin page (nginx reloads by itself) |
 | Force an nginx reload | admin page, "Nginx" tab, **Force reload nginx** |
 | Did nginx reload? | `docker compose logs -f nginx` (lines `[watch-maps]`) |
-| Full resync from the command line | `docker compose exec tenant_resolver tenant-resolver sync-users` (or `sync-agents`) |
-| Backends from the command line | `docker compose exec tenant_resolver tenant-resolver backend list` |
+| Full resync from the command line | `docker compose exec router tenant-resolver sync-users` (or `sync-agents`) |
+| Backends from the command line | `docker compose exec router tenant-resolver backend list` |
 | Health | `docker compose ps` (STATUS `healthy`); `GET /readyz` also checks the database |
+| Metrics | Prometheus scrapes `http://router:8000/metrics` from the Docker network (blocked on the public listener) |
 
 Several replicas are safe: only the leader syncs and runs the schedules (the claim of a scheduled run is atomic as
 well); every replica serves the routing API and the admin page. "Run now" runs on the replica that received it.
@@ -511,7 +516,7 @@ well); every replica serves the routing API and the admin page. "Run now" runs o
 | Symptom | Usual cause | Fix |
 |---|---|---|
 | Admin says "Admin is disabled…" (503) | `ADMIN_USERNAME` or `ADMIN_PASSWORD` missing | add them to `.env`, `docker compose up -d` |
-| Right password, still 401 | `.env` changed but the container was not recreated | `docker compose up -d --force-recreate tenant_resolver` |
+| Right password, still 401 | `.env` changed but the container was not recreated | `docker compose up -d --force-recreate router` |
 | `by-id-token` always "Microsoft Token is invalid or expired" | Microsoft unreachable (proxy/CA), `AAD_AUDIENCE` is not the frontend client ID, or expired token | look for `JWKS refresh failed` in the log; set `HTTPS_PROXY` if needed |
 | Frontend: "Your account is not assigned to a lab yet" | the user's backend has not published the user (no Entra binding, or stream not synced yet) | "Sync" tab of the Router; bind the user on the backend (`manage.py bind_entra_identity`, see section 1) |
 | Frontend: CORS error on `/routing/...` | frontend origin not in `CORS_ALLOWED_ORIGINS` | set it, `docker compose up -d` (nginx logs the origins at start) |
@@ -531,7 +536,7 @@ well); every replica serves the routing API and the admin page. "Run now" runs o
 ## 11. Security (minimum)
 
 - The admin uses **one account** from `.env`, sent with every request. **Use HTTPS** in production (configured in
-  `deploy/nginx/production/nginx.conf`).
+  `deploy/nginx/prod/nginx.conf`).
 - The admin page keeps the credentials in `sessionStorage` (gone when the tab closes); "Sign out" clears them.
 - Every failed sign-in waits 0.5 s and logs `admin login failed`.
 - Restrict `/admin/` and `/api/v1/admin/` to the internal network, e.g. in the production nginx:

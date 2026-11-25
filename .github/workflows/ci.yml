@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: router
+          POSTGRES_PASSWORD: router
+          POSTGRES_DB: router_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U router -d router_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+        env:
+          TEST_DATABASE_URL: postgres://router:router@localhost:5432/router_test
+
+  deploy-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: sh -n deploy/nginx/watch-maps.sh
+      - name: nginx -t (dev and prod)
+        run: |
+          for env in dev prod; do
+            docker run --rm \
+              -v "$PWD/deploy/nginx/$env/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+              -v "$PWD/deploy/nginx/$env/tenants:/etc/nginx/tenants:ro" \
+              nginx:1.27-alpine sh -c '
+                mkdir -p /etc/nginx/tenants-admin /etc/nginx/generated /etc/nginx/ssl &&
+                : > /etc/nginx/tenants-admin/backends.admin.map &&
+                : > /etc/nginx/generated/cors_origins.map &&
+                cp /etc/ssl/certs/ca-certificates.crt /etc/nginx/generated/ca-bundle.crt &&
+                apk add --no-cache openssl >/dev/null &&
+                openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=test -days 1 \
+                  -keyout /etc/nginx/ssl/another-host.com.key -out /etc/nginx/ssl/another-host.com.pem 2>/dev/null &&
+                nginx -t'
+          done
+      - name: Compose files
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.dev.yml config -q
+          CORS_ALLOWED_ORIGINS=https://example.com docker compose -f docker-compose.prod.yml config -q
+
+  image:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: labmango-router:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

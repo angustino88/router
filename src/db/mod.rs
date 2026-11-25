@@ -1,7 +1,8 @@
 //! PostgreSQL access.
 //!
-//! * Django tables, kept compatible: `tenant_backend`, `tenant_usertenantresolver`, `tenant_agenttenantresolver`.
-//! * Own tables: `rust_periodic_task` (schedules) and `rust_task_run` (run history).
+//! * Registry and claims: `tenant_backend`, `tenant_usertenantresolver`, `tenant_agenttenantresolver`. Their layout
+//!   is unchanged from the original Django service, so an existing database is reused as is.
+//! * Router tables: `rust_periodic_task` (schedules), `rust_task_run` (run history), `rust_sync_cursor` (stream cursors).
 //!
 //! Submodules by feature: [`routing`] (lookups for the public API), [`backends`] (backend CRUD),
 //! [`mappings`] (sync snapshots and mapping views), [`jobs`] (schedules and run history).
@@ -11,21 +12,32 @@ pub mod jobs;
 pub mod mappings;
 pub mod routing;
 
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{
+    postgres::{PgConnectOptions, PgPoolOptions},
+    PgPool,
+};
 
 const SCHEMA: &str = include_str!("schema.sql");
 
+/// Connects with retries (the database may start after the service). Every session gets a statement timeout,
+/// so a stuck query can never hold a connection forever.
 pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool> {
+    let options = PgConnectOptions::from_str(url)
+        .context("parse DATABASE_URL")?
+        .application_name("labmango-router")
+        .options([("statement_timeout", "30s"), ("idle_in_transaction_session_timeout", "60s")]);
     let mut last = None;
     for attempt in 1..=30 {
         match PgPoolOptions::new()
             .max_connections(max_connections)
             .min_connections(1)
             .acquire_timeout(Duration::from_secs(5))
-            .connect(url)
+            .idle_timeout(Duration::from_secs(600))
+            .max_lifetime(Duration::from_secs(1800))
+            .connect_with(options.clone())
             .await
         {
             Ok(p) => return Ok(p),
@@ -36,7 +48,7 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool> {
             }
         }
     }
-    Err(last.unwrap()).context("connect to DATABASE_URL")
+    Err(last.expect("at least one attempt")).context("connect to DATABASE_URL")
 }
 
 pub async fn migrate(pool: &PgPool) -> Result<()> {

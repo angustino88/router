@@ -8,9 +8,10 @@
 //! | [`admin`]   | admin page `/admin/` and admin API `/api/v1/admin/*` |
 //! | [`jobs`]    | background jobs: routing sync with the backends, nginx map, scheduler, leader election |
 //! | [`nginx`]   | nginx backend map files |
+//! | [`metrics`] | Prometheus metrics (`GET /metrics`) |
 //! | [`openapi`] | OpenAPI document built from `api-contracts` (`openapi` command, `GET /openapi.json`) |
 //! | [`db`]      | PostgreSQL schema and queries |
-//! | [`http`]    | server assembly and DRF-compatible request/error helpers |
+//! | [`http`]    | server assembly, request parsing and error bodies |
 //! | [`app`], [`cli`], [`settings`], [`state`], [`outbound`] | start-up, commands, configuration, shared state, Microsoft HTTP client |
 
 #![allow(clippy::result_large_err)] // handlers return a ready `Response` as the error, as axum does
@@ -21,6 +22,7 @@ mod cli;
 mod db;
 mod http;
 mod jobs;
+mod metrics;
 mod nginx;
 mod openapi;
 mod outbound;

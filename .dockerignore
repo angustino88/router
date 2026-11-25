@@ -1,9 +1,12 @@
-target/
+**/target/
 .git/
+.github/
 .cargo/
 .env
-.deploy-*
+.env.*
 docs/
 deploy/nginx/
 secrets/
 ssl_certificates/
+docker-compose*.yml
+Makefile

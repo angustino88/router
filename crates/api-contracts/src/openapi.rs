@@ -76,12 +76,7 @@ pub struct OpenApiDocument {
 
 impl OpenApiDocument {
     pub fn new(title: impl Into<String>, version: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            version: version.into(),
-            paths: BTreeMap::new(),
-            components: Components::new(),
-        }
+        Self { title: title.into(), version: version.into(), paths: BTreeMap::new(), components: Components::new() }
     }
 
     pub fn operation(self, method: &str, path: &str, contract: &OperationContract) -> Result<Self> {
@@ -111,13 +106,9 @@ impl OpenApiDocument {
     }
 
     pub fn to_value(&self) -> Value {
-        let paths: Map<String, Value> = self
-            .paths
-            .iter()
-            .map(|(path, item)| (path.clone(), Value::Object(item.clone())))
-            .collect();
-        let schemas: Map<String, Value> =
-            self.components.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let paths: Map<String, Value> =
+            self.paths.iter().map(|(path, item)| (path.clone(), Value::Object(item.clone()))).collect();
+        let schemas: Map<String, Value> = self.components.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         json!({
             "openapi": "3.1.0",
             "info": { "title": self.title, "version": self.version },

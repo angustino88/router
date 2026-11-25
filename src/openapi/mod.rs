@@ -1,9 +1,9 @@
 //! OpenAPI 3.1 document of the whole service, built with the `api-contracts` crate.
 //!
-//! **Documentation only.** This service must keep the wire format of the old Django REST Framework
-//! service (`{"detail": "..."}`, `{"<field>": ["..."]}`, bare `{"mappings": [...]}`), so the handlers are
-//! not changed and the `{"data": ...}` envelope of `api-contracts` is not used. Every response is declared
-//! with `ResponseContract::documented(status, schema)` and describes what the handler really returns.
+//! **Documentation only.** The wire format is fixed for existing clients (`{"detail": "..."}`,
+//! `{"<field>": ["..."]}`, bare `{"mappings": [...]}`), so the `{"data": ...}` envelope of `api-contracts`
+//! is not used. Every response is declared with `ResponseContract::documented(status, schema)` and describes
+//! what the handler really returns.
 //!
 //! The document is available as:
 //!
@@ -37,15 +37,15 @@ use crate::{
     routing::{AGENT_ID_PATH, ID_TOKEN_PATH},
 };
 
-// ------------------------------------------------------------------ errors (DRF shapes)
+// ------------------------------------------------------------------ errors
 
-/// DRF error body: `{"detail": "..."}`.
+/// Error body: `{"detail": "..."}`.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Detail {
     pub detail: String,
 }
 
-/// DRF field errors: `{"<field>": ["message", ...]}`.
+/// Field errors: `{"<field>": ["message", ...]}`.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct FieldErrors(pub BTreeMap<String, Vec<String>>);
 
@@ -349,7 +349,7 @@ fn body<T: ToSchema>(status: u16) -> ResponseContract {
     ResponseContract::documented(status, SchemaDef::of::<T>())
 }
 
-/// DRF `{"detail": "..."}` error.
+/// `{"detail": "..."}` error.
 fn error(status: u16) -> ResponseContract {
     body::<Detail>(status)
 }
@@ -677,7 +677,7 @@ pub fn document() -> ContractResult<Value> {
          through nginx they are served under /routing/... instead of /api/v1/routing/... \
          A key claimed by several backends answers 409 (ROUTING_CONFLICT_POLICY=reject). \
          Admin endpoints need the admin account (HTTP Basic, or username/password in the JSON body). \
-         Error bodies keep the Django REST Framework shapes."
+         Errors are {\"detail\": ...} or {\"<field>\": [...]}."
     );
     value["components"]["securitySchemes"] = json!({
         "basicAuth": { "type": "http", "scheme": "basic", "description": "ADMIN_USERNAME / ADMIN_PASSWORD from .env" }

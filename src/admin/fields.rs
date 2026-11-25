@@ -1,10 +1,10 @@
-//! Parsing and validation of admin request fields. Errors use the DRF shape `{"<field>": ["..."]}`.
+//! Parsing and validation of admin request fields. Errors use the field-error shape `{"<field>": ["..."]}`.
 
 use axum::{body::Bytes, http::HeaderMap, response::Response};
 use serde_json::{Map, Value};
 
 use crate::{
-    http::drf::{field_error, request_data},
+    http::api::{field_error, request_data},
     state::AppState,
 };
 

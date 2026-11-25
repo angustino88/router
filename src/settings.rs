@@ -1,5 +1,4 @@
-//! Runtime settings. Variables shared with the old Django service keep their names and defaults
-//! (`tenant_resolver_service/settings.py`).
+//! Runtime settings, read from the environment (and an optional `.env` file).
 
 use std::{env, fs, path::Path, time::Duration};
 
@@ -15,7 +14,7 @@ pub struct Settings {
     pub listen_addr: String,
     pub database_url: String,
     pub db_max_connections: u32,
-    /// Create the Django-compatible tables if they do not exist yet.
+    /// Create or upgrade the tables at start-up.
     pub auto_migrate: bool,
 
     pub aad_audience: String,
@@ -34,14 +33,14 @@ pub struct Settings {
     /// Long-poll wait sent as `wait=` to `/internal/changes/{entity}` (`SYNC_LONGPOLL_WAIT`, 0..30 s).
     pub sync_longpoll_wait: u64,
 
-    /// Master switch for the scheduler (replaces Celery beat + worker). Schedules live in the database.
+    /// Master switch for the scheduler and the stream sync. Schedules live in the database.
     pub sync_enabled: bool,
     /// Initial intervals, used only the first time the schedule rows are created
-    /// (after the intervals found in an old `django_celery_beat` table, if any).
+    /// (a legacy Celery beat interval found in the database takes precedence).
     pub user_sync_interval: Duration,
     pub agent_sync_interval: Duration,
 
-    /// Git-managed nginx map (read-only here), e.g. the mounted `deploy/nginx/production/tenants/backends.map`.
+    /// Git-managed nginx map (read-only here), e.g. the mounted `deploy/nginx/prod/tenants/backends.map`.
     pub nginx_map_file: String,
     /// Shared volume with the nginx container: generated map, reload request, nginx status.
     pub nginx_admin_dir: String,
@@ -61,7 +60,7 @@ pub struct Settings {
 pub enum ConflictPolicy {
     /// Resolve to nothing (HTTP 409) and log a warning. Default, as required by the backend spec.
     Reject,
-    /// Legacy behaviour of the Django service: return every claiming backend and let the client choose.
+    /// Legacy behaviour: return every claiming backend and let the client choose.
     All,
 }
 
@@ -211,7 +210,7 @@ fn secs_f64(name: &str, default: f64) -> Result<Duration> {
     Ok(Duration::from_secs_f64(v))
 }
 
-/// Same truthy values as django-environ's `env.bool`.
+/// Accepted boolean spellings: true/on/ok/y/yes/1 and false/off/n/no/0.
 fn parse_bool(name: &str, default: bool) -> Result<bool> {
     match var(name) {
         None => Ok(default),
@@ -223,7 +222,7 @@ fn parse_bool(name: &str, default: bool) -> Result<bool> {
     }
 }
 
-/// django-environ accepts `psql://`, `pgsql://`, `postgresql://` and `postgres://`; sqlx wants the last two.
+/// Accepts `psql://`, `pgsql://`, `postgis://`, `postgresql://` and `postgres://`; sqlx wants the last two.
 fn normalize_db_url(url: &str) -> Result<String> {
     for (from, to) in [("psql://", "postgres://"), ("pgsql://", "postgres://"), ("postgis://", "postgres://")] {
         if let Some(rest) = url.strip_prefix(from) {

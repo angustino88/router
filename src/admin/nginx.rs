@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::{
     db::backends::all_backends,
-    http::drf::{detail, server_error},
+    http::api::{detail, server_error},
     jobs::render_nginx_map_recorded,
     state::AppState,
 };

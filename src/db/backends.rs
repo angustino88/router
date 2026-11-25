@@ -1,4 +1,4 @@
-//! The backend registry: table `tenant_backend` (Django-compatible) plus the Router-only columns
+//! The backend registry: table `tenant_backend` plus the Router-only columns
 //! `upstream_url` (where nginx sends `/t/<prefix_key>/...`) and `backend_id` (the logical name the backend
 //! reports in `GET /internal/info`, routing-spec CNS-1/CNS-2).
 
@@ -82,7 +82,7 @@ pub fn valid_prefix_key(key: &str) -> bool {
     !key.is_empty() && key.len() <= 100 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Random key of `len` characters `a-z0-9` (as the Django admin generated them).
+/// Random key of `len` characters `a-z0-9`.
 pub fn random_prefix_key(len: usize) -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut out = String::with_capacity(len);
@@ -222,7 +222,7 @@ pub async fn update_backend(pool: &PgPool, id: i64, p: &BackendPatch) -> Result<
     get_view(pool, id).await
 }
 
-/// Deletes a backend and its mappings (Django's CASCADE) in one transaction. `None` when it does not exist.
+/// Deletes a backend and its mappings in one transaction. `None` when it does not exist.
 pub async fn delete_backend(pool: &PgPool, id: i64) -> Result<Option<DeleteCounts>, sqlx::Error> {
     let mut tx: Transaction<'_, Postgres> = pool.begin().await?;
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM tenant_backend WHERE id = $1 FOR UPDATE")

@@ -1,4 +1,4 @@
-//! Public routing API, request/response compatible with the Django views in `tenant/api.py`:
+//! Public routing API:
 //!
 //! * `POST /api/v1/routing/auth/backend-info/by-id-token/`  body `{"id_token": "..."}`
 //! * `POST /api/v1/routing/auth/backend-info/by-agent-id/`  body `{"agent_id": "..."}`
@@ -8,7 +8,7 @@
 //! A key claimed by more than one active backend is a conflict (backend routing spec CNS-6). With the default
 //! `ROUTING_CONFLICT_POLICY=reject` it resolves to nothing: `409 {"detail": "..."}` and a warning in the log, so
 //! a user is never silently sent to one of two departments. `ROUTING_CONFLICT_POLICY=all` keeps the old
-//! Django behaviour (every claiming backend is listed and the client chooses).
+//! behaviour (every claiming backend is listed and the client chooses).
 
 pub mod aad;
 
@@ -26,7 +26,8 @@ use serde_json::json;
 
 use crate::{
     db::routing as lookups,
-    http::drf::{char_field, detail, request_data, server_error},
+    http::api::{char_field, detail, request_data, server_error},
+    metrics,
     settings::ConflictPolicy,
     state::AppState,
 };
@@ -59,9 +60,29 @@ fn mappings_response(
     (StatusCode::OK, Json(json!({ "mappings": mappings }))).into_response()
 }
 
-/// `GetBackendInfoByUserIdTokenAPIView.post`
+/// Counts the outcome of a routing request (`router_routing_requests_total`).
+fn record(entity: &str, r: Response) -> Response {
+    let outcome = match r.status() {
+        StatusCode::OK => "ok",
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::CONFLICT => "conflict",
+        s if s.is_client_error() => "rejected",
+        _ => "error",
+    };
+    metrics::inc("router_routing_requests_total", &[("entity", entity), ("outcome", outcome)]);
+    r
+}
+
 async fn by_id_token(State(s): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let data = match request_data(&headers, &body) {
+    record("users", resolve_user(&s, &headers, &body).await)
+}
+
+async fn by_agent_id(State(s): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
+    record("agents", resolve_agent(&s, &headers, &body).await)
+}
+
+async fn resolve_user(s: &AppState, headers: &HeaderMap, body: &Bytes) -> Response {
+    let data = match request_data(headers, body) {
         Ok(d) => d,
         Err(r) => return r,
     };
@@ -77,7 +98,7 @@ async fn by_id_token(State(s): State<Arc<AppState>>, headers: HeaderMap, body: B
             return detail(StatusCode::BAD_REQUEST, aad::INVALID_TOKEN);
         }
     };
-    // The user is identified by the Entra identity (tid + oid), the key the core backends publish.
+    // The user is identified by the Entra identity (tid + oid), the key the backends publish.
     let key = match aad::extract_user_key(&payload) {
         Ok(k) => k,
         Err(msg) => return detail(StatusCode::BAD_REQUEST, msg),
@@ -91,9 +112,8 @@ async fn by_id_token(State(s): State<Arc<AppState>>, headers: HeaderMap, body: B
     }
 }
 
-/// `GetBackendInfoByAgentIdAPIView.post`
-async fn by_agent_id(State(s): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let data = match request_data(&headers, &body) {
+async fn resolve_agent(s: &AppState, headers: &HeaderMap, body: &Bytes) -> Response {
+    let data = match request_data(headers, body) {
         Ok(d) => d,
         Err(r) => return r,
     };
@@ -109,7 +129,7 @@ async fn by_agent_id(State(s): State<Arc<AppState>>, headers: HeaderMap, body: B
     }
 }
 
-/// Other methods: DRF answers OPTIONS with view metadata and anything else with 405.
+/// OPTIONS answers the view metadata, any other method 405.
 async fn not_allowed(method: Method) -> Response {
     let allow = [(header::ALLOW, HeaderValue::from_static("POST, OPTIONS"))];
     if method == Method::OPTIONS {
@@ -141,7 +161,7 @@ mod tests {
     use serde_json::Value;
 
     #[tokio::test]
-    async fn not_allowed_is_drf_shaped() {
+    async fn not_allowed_has_detail_body() {
         let r = not_allowed(Method::GET).await;
         assert_eq!(r.status(), StatusCode::METHOD_NOT_ALLOWED);
         let body: Value = serde_json::from_slice(&to_bytes(r.into_body(), usize::MAX).await.unwrap()).unwrap();

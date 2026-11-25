@@ -18,7 +18,7 @@ use crate::{
         mappings::list_mappings,
         Kind,
     },
-    http::drf::{detail, field_error, server_error},
+    http::api::{detail, field_error, server_error},
     jobs::render_nginx_map_recorded,
     state::AppState,
 };

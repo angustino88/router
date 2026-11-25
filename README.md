@@ -30,16 +30,20 @@ backend.
 
 ```bash
 cp .env.example .env            # edit ADMIN_PASSWORD, ROUTING_SYNC_TOKEN, CORS_ALLOWED_ORIGINS…
-docker compose --profile db up -d --build
+make dev-up                     # docker compose -f docker-compose.dev.yml up -d --build
 # http://localhost:8080/admin/
 ```
 
-| Folder | Content |
+| Path | Content |
 |---|---|
-| `src/` | Rust code, one folder per feature (`routing`, `admin`, `jobs`, `nginx`, `db`, `http`, `openapi`) |
-| `api-contracts-rs/` | the `api-contracts` crate (OpenAPI contracts), used by `src/openapi/` |
-| `deploy/` | nginx configuration (local, production), the nginx reload watcher, extra CA certificates |
-| `docs/` | deployment and operations guide |
+| `src/` | the Router service, one folder per feature (`routing`, `admin`, `jobs`, `nginx`, `db`, `http`, `openapi`) |
+| `crates/api-contracts/` | OpenAPI contract crate used by `src/openapi/` (Cargo workspace member) |
+| `deploy/nginx/{dev,prod}/` | nginx configuration per environment; `deploy/nginx/watch-maps.sh` reloads nginx on map changes |
+| `deploy/certs/` | extra CA certificates (`*.crt`) |
+| `docker-compose.dev.yml` | development stack: Router, nginx, PostgreSQL |
+| `docker-compose.prod.yml` | production stack: Router, nginx (HTTPS); external PostgreSQL |
+| `docs/DEPLOYMENT.md` | deployment and operations guide |
+| `.github/workflows/ci.yml` | CI: fmt, clippy, tests with PostgreSQL, nginx/compose validation, image build |
 
 Full guide (frontend/backend wiring, configuration, API, production, operations):
 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
@@ -47,8 +51,17 @@ Full guide (frontend/backend wiring, configuration, API, production, operations)
 ## Development
 
 ```bash
-cargo build
-cargo test                                                                  # unit tests
-TEST_DATABASE_URL=postgres://user:pass@localhost:5432/test_db cargo test    # + database tests (DELETES data in that DB)
+make help                                                                   # all targets
+make check                                                                  # fmt, clippy, tests (as in CI)
+TEST_DATABASE_URL=postgres://user:pass@localhost:5432/test_db make test-db  # + database tests (DELETES data in that DB)
 cargo run -- --help                                                         # serve, migrate, sync-users, sync-agents, backend, openapi
 ```
+
+## Operations at a glance
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | liveness (process answers) |
+| `GET /readyz` | readiness (database answers) |
+| `GET /metrics` | Prometheus metrics; blocked on the public nginx listener, scrape `router:8000` internally |
+| `X-Request-ID` | accepted or generated on every request, returned in the response and logged |

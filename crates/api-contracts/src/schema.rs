@@ -42,9 +42,7 @@ impl SchemaRef {
         match self {
             Self::None => None,
             Self::Component(name) => Some(json!({ "$ref": format!("#/components/schemas/{name}") })),
-            Self::Array(inner) => inner
-                .to_json()
-                .map(|items| json!({ "type": "array", "items": items })),
+            Self::Array(inner) => inner.to_json().map(|items| json!({ "type": "array", "items": items })),
         }
     }
 }
@@ -127,11 +125,7 @@ impl ResponseSchemaFactory {
         let payload = SchemaDef::of::<T>();
         let kind = if many { "List" } else { "Detail" };
         let component = format!("{name}{}{kind}Response", Self::component_suffix::<T>());
-        let data = if many {
-            SchemaRef::Array(Box::new(payload.root.clone()))
-        } else {
-            payload.root.clone()
-        };
+        let data = if many { SchemaRef::Array(Box::new(payload.root.clone())) } else { payload.root.clone() };
         let mut def = SchemaDef::component(
             component,
             json!({

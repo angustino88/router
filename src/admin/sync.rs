@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::{
     db::{mappings, Kind},
-    http::drf::server_error,
+    http::api::server_error,
     settings::ConflictPolicy,
     state::AppState,
 };

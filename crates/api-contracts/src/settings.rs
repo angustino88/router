@@ -17,10 +17,7 @@ pub fn default_code_value(code: &str) -> String {
     // Step 1 (Python: re.sub(r"([a-z0-9])([A-Z])", r"\1_\2")): split camelCase.
     let mut spaced = String::with_capacity(code.len() + 4);
     for (i, &c) in chars.iter().enumerate() {
-        if i > 0
-            && c.is_ascii_uppercase()
-            && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit())
-        {
+        if i > 0 && c.is_ascii_uppercase() && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit()) {
             spaced.push('_');
         }
         spaced.push(c);
@@ -47,7 +44,7 @@ pub(crate) fn is_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64().map_or(true, |f| f != 0.0),
+        Value::Number(n) => n.as_f64().is_none_or(|f| f != 0.0),
         Value::String(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),

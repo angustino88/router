@@ -122,6 +122,7 @@ async fn worker(syncer: Arc<Syncer>, backend: Backend, task: Task, cancel: Cance
                 }
             }
             Err(e) => {
+                crate::metrics::inc("router_sync_errors_total", &[("entity", entity)]);
                 tracing::warn!(backend = %backend.prefix_key, entity, retry_in_ms = backoff.as_millis() as u64, "stream sync error: {e}");
                 tokio::select! {
                     _ = cancel.cancelled() => break,
@@ -143,6 +144,7 @@ async fn step(syncer: &Syncer, backend: &Backend, task: Task) -> Result<(), Sync
     match syncer.poll_once(backend, task, &cursor).await? {
         PollOutcome::Idle | PollOutcome::Stale => {}
         PollOutcome::Applied { counts, to, has_more } => {
+            crate::metrics::inc("router_sync_pages_applied_total", &[("entity", task.entity())]);
             tracing::info!(
                 backend = %backend.prefix_key, entity = task.entity(), version = to.version, has_more,
                 created = counts.created, updated = counts.updated, deactivated = counts.deactivated,

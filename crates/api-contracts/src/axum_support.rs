@@ -17,14 +17,11 @@ impl IntoResponse for ContractResponse {
             None => Body::empty(),
         };
         for (name, value) in &self.headers {
-            if let (Ok(name), Ok(value)) =
-                (HeaderName::try_from(name.as_str()), HeaderValue::try_from(value.as_str()))
+            if let (Ok(name), Ok(value)) = (HeaderName::try_from(name.as_str()), HeaderValue::try_from(value.as_str()))
             {
                 builder = builder.header(name, value);
             }
         }
-        builder
-            .body(body)
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        builder.body(body).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
     }
 }

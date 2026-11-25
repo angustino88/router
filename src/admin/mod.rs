@@ -1,4 +1,4 @@
-//! Admin page `/admin/` and admin API `/api/v1/admin/*` (replaces the Django admin).
+//! Admin page `/admin/` and admin API `/api/v1/admin/*`.
 //!
 //! One account from the environment (ADMIN_USERNAME / ADMIN_PASSWORD), sent on every request as HTTP Basic
 //! auth or as `username` / `password` in the JSON body.

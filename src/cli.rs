@@ -1,4 +1,4 @@
-//! Maintenance commands (run inside the container with `docker compose exec tenant_resolver tenant-resolver ...`).
+//! Maintenance commands (in a container: `docker compose -f docker-compose.<env>.yml exec router tenant-resolver ...`).
 
 use anyhow::{bail, Result};
 use clap::Subcommand;

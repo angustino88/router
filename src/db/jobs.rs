@@ -1,5 +1,4 @@
-//! Schedules (`rust_periodic_task`, replaces django_celery_beat) and run history (`rust_task_run`,
-//! replaces the Celery result backend).
+//! Schedules (`rust_periodic_task`) and run history (`rust_task_run`).
 
 use serde::Serialize;
 use serde_json::Value;

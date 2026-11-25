@@ -1,4 +1,4 @@
-//! Lookups behind the public routing API (`service.list_active_backends_by_*` in Django).
+//! Lookups behind the public routing API.
 
 use std::collections::HashSet;
 
@@ -6,7 +6,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
-/// One item of the `mappings` list. Field order matches the Python response.
+/// One item of the `mappings` list.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
 pub struct Mapping {
     /// Backend display name.

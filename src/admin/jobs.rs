@@ -1,4 +1,4 @@
-//! Schedules (replaces Celery beat) and run history.
+//! Schedules and run history.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use super::fields::{authorized_body, optional_bool, optional_int};
 use crate::{
     db::jobs::{self as db, Schedule},
-    http::drf::{detail, field_error, server_error},
+    http::api::{detail, field_error, server_error},
     jobs::Job,
     state::AppState,
 };

@@ -33,13 +33,11 @@ mod axum_support;
 pub use error::{ContractError, Result};
 pub use openapi::{OpenApiDocument, OperationDoc};
 pub use operation::{OperationBuilder, OperationContract, ResponseSet};
-pub use response::{
-    error_details, ContractResponse, ErrorTree, PageParams, ProblemArgs, ResponseContract,
-};
+pub use response::{error_details, ContractResponse, ErrorTree, PageParams, ProblemArgs, ResponseContract};
 pub use schema::{merge_components, Components, ResponseSchemaFactory, SchemaDef, SchemaRef};
 pub use settings::{
-    default_code_value, default_problem_detail, CodeResolver, ContractSettings, ProblemResolver,
-    DEFAULT_PROBLEM_TYPE, PROBLEM_JSON,
+    default_code_value, default_problem_detail, CodeResolver, ContractSettings, ProblemResolver, DEFAULT_PROBLEM_TYPE,
+    PROBLEM_JSON,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

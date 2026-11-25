@@ -13,7 +13,7 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 use subtle::ConstantTimeEq;
 
-use crate::{http::drf::detail, state::AppState};
+use crate::{http::api::detail, state::AppState};
 
 #[derive(Clone)]
 pub struct AdminAccount {
@@ -80,7 +80,7 @@ pub async fn authorize(
 
 /// `POST /api/v1/admin/login`
 pub async fn login(State(s): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let data = match crate::http::drf::request_data(&headers, &body) {
+    let data = match crate::http::api::request_data(&headers, &body) {
         Ok(d) => d,
         Err(r) => return r,
     };

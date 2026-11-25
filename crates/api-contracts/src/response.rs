@@ -95,7 +95,10 @@ impl ProblemArgs {
 pub enum ErrorTree {
     None,
     /// DRF `ErrorDetail` (message + code).
-    Detail { code: String, message: String },
+    Detail {
+        code: String,
+        message: String,
+    },
     Map(Vec<(String, ErrorTree)>),
     List(Vec<ErrorTree>),
     /// Plain text; reported with code `invalid`.
@@ -287,10 +290,7 @@ impl ResponseContract {
         let mut documented = Vec::with_capacity(contracts.len());
         for contract in contracts {
             if !seen.insert(contract.status_code) {
-                return Err(ContractError::value(format!(
-                    "duplicate response status code: {}",
-                    contract.status_code
-                )));
+                return Err(ContractError::value(format!("duplicate response status code: {}", contract.status_code)));
             }
             documented.push(contract.document());
         }
@@ -378,9 +378,8 @@ impl ResponseContract {
         }
         let data = serde_json::to_value(results)
             .map_err(|e| ContractError::type_err(format!("cannot serialize results: {e}")))?;
-        let items = data
-            .as_array()
-            .ok_or_else(|| ContractError::type_err("respond_page() requires results to be a list"))?;
+        let items =
+            data.as_array().ok_or_else(|| ContractError::type_err("respond_page() requires results to be a list"))?;
         let page_size = match params.page_size {
             Some(size) => size,
             None => items.len().max(1) as i64,

@@ -1,10 +1,8 @@
-//! Azure AD ID-token validation, equivalent to `service._decode_id_token`:
-//! RS256, signing key picked by `kid` from `AAD_JWKS_URL`, `aud == AAD_AUDIENCE`, `exp` (and `nbf`) checked.
+//! Microsoft Entra ID-token validation: RS256, signing key picked by `kid` from `AAD_JWKS_URL`,
+//! `aud == AAD_AUDIENCE`, `exp` and `nbf` checked.
 //!
-//! Difference from Python (on purpose, for speed): the Python code builds a new `PyJWKClient` per request and
-//! therefore downloads the JWKS on every call. Here keys are cached for `AAD_JWKS_CACHE_TTL`, refreshed
-//! immediately when an unknown `kid` shows up (at most once every 30 s), and the last good keys stay in use if
-//! Microsoft is unreachable.
+//! Keys are cached for `AAD_JWKS_CACHE_TTL`, refreshed immediately when an unknown `kid` shows up (at most once
+//! every 30 s), and the last good keys stay in use while Microsoft is unreachable.
 
 use std::{
     collections::HashMap,
@@ -16,7 +14,7 @@ use anyhow::{bail, Context, Result};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde_json::Value;
 
-/// Message returned to clients for every validation failure (same text as Python's `AADAuthError`).
+/// Message returned to clients for every validation failure (kept stable for existing clients).
 pub const INVALID_TOKEN: &str = "Microsoft Token is invalid or expired";
 
 const MIN_FORCED_REFRESH: Duration = Duration::from_secs(30);
@@ -40,7 +38,7 @@ impl Aad {
     pub fn new(http: reqwest::Client, jwks_url: String, audience: &str, ttl: Duration) -> Aad {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&[audience]);
-        // PyJWT defaults: no leeway, `exp`/`nbf`/`aud` verified when present, `aud` required because an audience is set.
+        // No leeway; `exp`/`nbf` verified when present; `aud` required.
         validation.leeway = 0;
         validation.validate_exp = true;
         validation.validate_nbf = true;
@@ -92,7 +90,10 @@ impl Aad {
                     *self.cache.write().unwrap() = Some(set.clone());
                     return set.keys.get(kid).cloned().with_context(|| format!("no signing key with kid {kid}"));
                 }
-                Err(e) => tracing::warn!("JWKS refresh failed, using cached keys if any: {e:#}"),
+                Err(e) => {
+                    crate::metrics::inc("router_jwks_refresh_failures_total", &[]);
+                    tracing::warn!("JWKS refresh failed, using cached keys if any: {e:#}");
+                }
             }
         }
         let current = self.cache.read().unwrap().clone();

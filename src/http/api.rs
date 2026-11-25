@@ -1,4 +1,4 @@
-//! Request parsing and error bodies with the same shapes as Django REST Framework, so existing clients of the
+//! Request parsing and error bodies. The shapes are those of the original service, so existing clients of the
 //! old service keep working: `{"detail": "..."}` and `{"<field>": ["..."]}`.
 
 use axum::{
@@ -21,14 +21,14 @@ pub fn field_error(field: &str, message: impl Into<String>) -> Response {
     (StatusCode::BAD_REQUEST, Json(Value::Object(m))).into_response()
 }
 
-/// 500 with DRF's generic text; the cause goes to the log only.
+/// 500 with a generic text; the cause goes to the log only.
 pub fn server_error(e: impl std::fmt::Display) -> Response {
     tracing::error!("internal error: {e}");
     detail(StatusCode::INTERNAL_SERVER_ERROR, "A server error occurred.")
 }
 
 /// Request body as an object: JSON (`application/json`) or a form (`application/x-www-form-urlencoded`).
-/// An empty body is an empty object. Other content types give 415, malformed JSON gives 400 (DRF texts).
+/// An empty body is an empty object. Other content types give 415, malformed JSON gives 400.
 pub fn request_data(headers: &HeaderMap, body: &Bytes) -> Result<Map<String, Value>, Response> {
     if body.iter().all(u8::is_ascii_whitespace) {
         return Ok(Map::new());
@@ -61,7 +61,7 @@ pub fn request_data(headers: &HeaderMap, body: &Bytes) -> Result<Map<String, Val
     }
 }
 
-/// Minimal `application/x-www-form-urlencoded` decoder (last value of a repeated key wins, as in DRF).
+/// Minimal `application/x-www-form-urlencoded` decoder (last value of a repeated key wins).
 fn form_urlencoded_pairs(body: &[u8]) -> Vec<(String, String)> {
     fn decode(s: &str) -> String {
         let bytes = s.as_bytes();
@@ -95,7 +95,7 @@ fn form_urlencoded_pairs(body: &[u8]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Required DRF `CharField` (trimmed): missing/null, blank and non-scalar values are field errors.
+/// Required string field (trimmed): missing/null, blank and non-scalar values are field errors.
 pub fn char_field(data: &Map<String, Value>, name: &str) -> Result<String, Response> {
     let raw = match data.get(name) {
         None => return Err(field_error(name, "This field is required.")),

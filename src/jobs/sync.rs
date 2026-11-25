@@ -128,7 +128,7 @@ impl Task {
         }
     }
 
-    /// Task name registered in Celery, used to import old beat schedules.
+    /// Task name of the legacy Celery schedule, read once to seed the interval.
     pub fn celery_name(self) -> &'static str {
         match self {
             Task::Users => "tenant.tasks.sync_all_backend_users",
@@ -570,6 +570,7 @@ impl Syncer {
         keys.sort();
         let records = Self::records(keys);
         let cursor = Cursor { epoch: epoch.clone(), version: version as i64 };
+        crate::metrics::inc("router_sync_resyncs_total", &[("entity", entity)]);
         let status = match mappings::replace_all(&self.pool, backend.id, kind, &records, &cursor).await? {
             Some(c) => json!({
                 "status": "resynced", "backend": backend.prefix_key, "epoch": epoch, "version": version,
@@ -677,6 +678,7 @@ impl Syncer {
                 if e.kind == ErrorKind::NotAdvertised {
                     return json!({"status": "not_advertised", "backend": backend.prefix_key});
                 }
+                crate::metrics::inc("router_sync_errors_total", &[("entity", task.entity())]);
                 tracing::error!(backend = %backend.prefix_key, entity = task.entity(), "sync failed: {e}");
                 json!({"status": "failed", "backend": backend.prefix_key, "error": e.to_string()})
             });

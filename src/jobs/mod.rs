@@ -1,4 +1,4 @@
-//! Background jobs: replacement for Celery worker + Celery beat + result backend.
+//! Background jobs.
 //!
 //!
 //! * [`Runner`] executes a job in the background and records each run in `rust_task_run`
@@ -6,7 +6,7 @@
 //! * [`run_scheduler`] checks `rust_periodic_task` every few seconds and starts jobs that are due.
 //!   Schedules are edited from the admin page; claiming a due run is atomic in the database, so several
 //!   replicas never start the same scheduled run twice.
-//! * A job never overlaps itself in one process (Celery beat would queue a second run instead).
+//! * A job never overlaps itself in one process.
 //!
 //! Jobs: `sync_all_backend_users` / `sync_all_backend_agents` (safety-net check of the routing streams:
 //! resync on a changed epoch or count drift; the continuous sync is the long-poll loop in [`stream`]),
@@ -164,7 +164,7 @@ pub async fn init(pool: &PgPool, s: &Settings) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Celery beat replacement. Database errors are logged and retried on the next tick. Runs on the leader replica.
+/// Starts due schedules. Database errors are logged and retried on the next tick. Runs on the leader replica.
 pub async fn run_scheduler(pool: PgPool, runner: Arc<Runner>, cancel: CancellationToken) {
     tracing::info!("scheduler started");
     loop {
