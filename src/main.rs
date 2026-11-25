@@ -5,7 +5,7 @@
 //! | Module | Feature |
 //! |---|---|
 //! | [`routing`] | public API `by-id-token` / `by-agent-id` (+ Azure AD token check) |
-//! | [`admin`]   | admin page `/admin/` and admin API `/api/v1/admin/*` |
+//! | [`admin`]   | admin page `/admin/` and admin API `/admin/api/*` |
 //! | [`jobs`]    | background jobs: routing sync with the backends, nginx map, scheduler, leader election |
 //! | [`nginx`]   | nginx backend map files |
 //! | [`metrics`] | Prometheus metrics (`GET /metrics`) |

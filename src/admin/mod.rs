@@ -1,4 +1,4 @@
-//! Admin page `/admin/` and admin API `/api/v1/admin/*`.
+//! Admin page `/admin/` and admin API `/admin/api/*`.
 //!
 //! One account from the environment (ADMIN_USERNAME / ADMIN_PASSWORD), sent on every request as HTTP Basic
 //! auth or as `username` / `password` in the JSON body.
@@ -26,6 +26,9 @@ pub use fields::{backend_id as validate_backend_id, upstream_url as validate_ups
 
 const PAGE: &str = include_str!("page.html");
 
+/// Prefix of the admin API.
+pub const API: &str = "/admin/api";
+
 async fn page() -> Response {
     (
         StatusCode::OK,
@@ -41,24 +44,20 @@ async fn page() -> Response {
 }
 
 pub fn router() -> Router<Arc<AppState>> {
-    const A: &str = "/api/v1/admin";
     Router::new()
         .route("/admin", get(|| async { Redirect::permanent("/admin/") }))
         .route("/admin/", get(page))
-        .route(&format!("{A}/login"), post(auth::login))
-        .route(&format!("{A}/backends"), get(backends::list).post(backends::create))
-        .route(
-            &format!("{A}/backends/:id"),
-            get(backends::get_one).patch(backends::update).put(backends::update).delete(backends::delete),
-        )
-        .route(&format!("{A}/backends/:id/users"), get(backends::users))
-        .route(&format!("{A}/backends/:id/agents"), get(backends::agents))
-        .route(&format!("{A}/nginx"), get(nginx::status))
-        .route(&format!("{A}/nginx/reload"), post(nginx::reload))
-        .route(&format!("{A}/schedules"), get(jobs::list))
-        .route(&format!("{A}/schedules/:name"), get(jobs::get_one).patch(jobs::update).put(jobs::update))
-        .route(&format!("{A}/schedules/:name/run"), post(jobs::run))
-        .route(&format!("{A}/task-runs"), get(jobs::runs))
-        .route(&format!("{A}/sync"), get(sync::status))
-        .route(&format!("{A}/conflicts"), get(sync::conflicts))
+        .route(&format!("{API}/login"), post(auth::login))
+        .route(&format!("{API}/backends"), get(backends::list).post(backends::create))
+        .route(&format!("{API}/backends/:id"), get(backends::get_one).patch(backends::update).delete(backends::delete))
+        .route(&format!("{API}/backends/:id/users"), get(backends::users))
+        .route(&format!("{API}/backends/:id/agents"), get(backends::agents))
+        .route(&format!("{API}/nginx"), get(nginx::status))
+        .route(&format!("{API}/nginx/reload"), post(nginx::reload))
+        .route(&format!("{API}/jobs"), get(jobs::list))
+        .route(&format!("{API}/jobs/:name"), get(jobs::get_one).patch(jobs::update))
+        .route(&format!("{API}/jobs/:name/run"), post(jobs::run))
+        .route(&format!("{API}/runs"), get(jobs::runs))
+        .route(&format!("{API}/sync"), get(sync::status))
+        .route(&format!("{API}/sync/conflicts"), get(sync::conflicts))
 }

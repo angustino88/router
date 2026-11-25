@@ -1,8 +1,11 @@
-//! Public routing API:
+//! Public routing API (served under the same paths by the service and by nginx):
 //!
-//! * `POST /api/v1/routing/auth/backend-info/by-id-token/`  body `{"id_token": "..."}`
-//! * `POST /api/v1/routing/auth/backend-info/by-agent-id/`  body `{"agent_id": "..."}`
+//! * `POST /routing/resolve/user`   body `{"id_token": "..."}` (Microsoft ID token)
+//! * `POST /routing/resolve/agent`  body `{"agent_id": "..."}` (agent UUID)
 //!
+//! The paths of the original service, `/routing/auth/backend-info/by-id-token/` and `.../by-agent-id/` (also
+//! under `/api/v1/`), remain as deprecated aliases: same behaviour, plus `Deprecation: true` and a `Link` to
+//! the successor.
 //! Success: `200 {"mappings": [{"backend_name": "...", "prefix": "/t/<prefix_key>"}]}`.
 //!
 //! A key claimed by more than one active backend is a conflict (backend routing spec CNS-6). With the default
@@ -37,9 +40,23 @@ const USER_CONFLICT: &str =
 const AGENT_CONFLICT: &str =
     "This agent is assigned to more than one backend. Ask an administrator to remove the duplicate assignment.";
 
-pub const ID_TOKEN_PATH: &str = "/api/v1/routing/auth/backend-info/by-id-token/";
+pub const RESOLVE_USER_PATH: &str = "/routing/resolve/user";
+pub const RESOLVE_AGENT_PATH: &str = "/routing/resolve/agent";
 
-pub const AGENT_ID_PATH: &str = "/api/v1/routing/auth/backend-info/by-agent-id/";
+/// Deprecated aliases of the user endpoint (original service paths, with and without the trailing slash).
+pub const LEGACY_USER_PATHS: [&str; 4] = [
+    "/routing/auth/backend-info/by-id-token/",
+    "/routing/auth/backend-info/by-id-token",
+    "/api/v1/routing/auth/backend-info/by-id-token/",
+    "/api/v1/routing/auth/backend-info/by-id-token",
+];
+/// Deprecated aliases of the agent endpoint.
+pub const LEGACY_AGENT_PATHS: [&str; 4] = [
+    "/routing/auth/backend-info/by-agent-id/",
+    "/routing/auth/backend-info/by-agent-id",
+    "/api/v1/routing/auth/backend-info/by-agent-id/",
+    "/api/v1/routing/auth/backend-info/by-agent-id",
+];
 
 fn mappings_response(
     policy: ConflictPolicy,
@@ -144,14 +161,36 @@ async fn not_allowed(method: Method) -> Response {
     r
 }
 
+/// Marks a response of a deprecated alias (RFC 9745 `Deprecation`, RFC 8288 `Link` to the successor).
+fn deprecated(mut r: Response, successor: &'static str) -> Response {
+    let h = r.headers_mut();
+    h.insert("deprecation", HeaderValue::from_static("true"));
+    if let Ok(link) = HeaderValue::from_str(&format!("<{successor}>; rel=\"successor-version\"")) {
+        h.insert(header::LINK, link);
+    }
+    r
+}
+
+async fn legacy_by_id_token(state: State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
+    deprecated(by_id_token(state, headers, body).await, RESOLVE_USER_PATH)
+}
+
+async fn legacy_by_agent_id(state: State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
+    deprecated(by_agent_id(state, headers, body).await, RESOLVE_AGENT_PATH)
+}
+
 pub fn router() -> Router<Arc<AppState>> {
-    let id_token = || -> MethodRouter<Arc<AppState>> { post(by_id_token).fallback(not_allowed) };
-    let agent_id = || -> MethodRouter<Arc<AppState>> { post(by_agent_id).fallback(not_allowed) };
-    Router::new()
-        .route(ID_TOKEN_PATH, id_token())
-        .route(ID_TOKEN_PATH.trim_end_matches('/'), id_token())
-        .route(AGENT_ID_PATH, agent_id())
-        .route(AGENT_ID_PATH.trim_end_matches('/'), agent_id())
+    let endpoint = |m: MethodRouter<Arc<AppState>>| m.fallback(not_allowed);
+    let mut r = Router::new()
+        .route(RESOLVE_USER_PATH, endpoint(post(by_id_token)))
+        .route(RESOLVE_AGENT_PATH, endpoint(post(by_agent_id)));
+    for path in LEGACY_USER_PATHS {
+        r = r.route(path, endpoint(post(legacy_by_id_token)));
+    }
+    for path in LEGACY_AGENT_PATHS {
+        r = r.route(path, endpoint(post(legacy_by_agent_id)));
+    }
+    r
 }
 
 #[cfg(test)]

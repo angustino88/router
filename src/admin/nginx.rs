@@ -17,7 +17,7 @@ use crate::{
     state::AppState,
 };
 
-/// `GET /api/v1/admin/nginx`
+/// `GET /admin/api/nginx`
 pub async fn status(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -84,7 +84,7 @@ pub async fn status(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Respo
     .into_response()
 }
 
-/// `POST /api/v1/admin/nginx/reload`: regenerate the map and make nginx reload even if nothing changed.
+/// `POST /admin/api/nginx/reload`: regenerate the map and make nginx reload even if nothing changed.
 pub async fn reload(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;

@@ -3,17 +3,17 @@
 Routes users and agents to the backend of their department when LabMango runs **several department backends**
 behind one frontend.
 
-- Public routing API: `POST /routing/auth/backend-info/by-id-token/` (users, Microsoft ID token) and
-  `POST /routing/auth/backend-info/by-agent-id/` (agents) answer the backend prefix `/t/<prefix_key>`.
+- Public routing API: `POST /routing/resolve/user` (Microsoft ID token) and `POST /routing/resolve/agent`
+  (agent UUID) answer the backend prefix `/t/<prefix_key>`.
 - nginx proxies `/t/<prefix_key>/...` to that backend (API, WebSockets, agents).
 - Continuous routing sync from every backend's private `/internal/*` API (snapshot + long-poll of the `users`
   and `agents` streams, per the backend's [routing sync spec](https://github.com/angustino88/lab-mango/blob/main/docs/agent-platform/routing-sync.md)).
-- Admin page `/admin/`: backends and their URLs (nginx reloads by itself), sync status, conflicts, schedules.
-- OpenAPI document for Apidog: `tenant-resolver openapi` or `GET /openapi.json`.
+- Admin page `/admin/`: backends and their URLs (nginx reloads by itself), sync status, conflicts, jobs; admin API under `/admin/api/`.
+- OpenAPI document: committed as [`openapi/openapi.json`](openapi/openapi.json) (`make openapi` regenerates it).
 
 ```mermaid
 flowchart LR
-    FE["Frontend (VITE_API_MODE=router)"] -->|"1. by-id-token"| NG["nginx (Router)"]
+    FE["Frontend (VITE_API_MODE=router)"] -->|"1. resolve/user"| NG["nginx (Router)"]
     FE -->|"2. /t/&lt;prefix&gt;/api/..."| NG
     NG --> RT["Router service (Rust)"]
     NG -->|"/t/&lt;prefix&gt;/..."| B1["Backend dept A"]
@@ -42,6 +42,7 @@ make dev-up                     # docker compose -f docker-compose.dev.yml up -d
 | `deploy/certs/` | extra CA certificates (`*.crt`) |
 | `docker-compose.dev.yml` | development stack: Router, nginx, PostgreSQL |
 | `docker-compose.prod.yml` | production stack: Router, nginx (HTTPS); external PostgreSQL |
+| `openapi/openapi.json` | generated OpenAPI 3.1 document (checked in CI) |
 | `docs/DEPLOYMENT.md` | deployment and operations guide |
 | `.github/workflows/ci.yml` | CI: fmt, clippy, tests with PostgreSQL, nginx/compose validation, image build |
 

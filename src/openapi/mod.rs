@@ -34,7 +34,7 @@ use crate::{
         backends::{BackendView, DeleteCounts},
         routing::Mapping,
     },
-    routing::{AGENT_ID_PATH, ID_TOKEN_PATH},
+    routing::{LEGACY_AGENT_PATHS, LEGACY_USER_PATHS, RESOLVE_AGENT_PATH, RESOLVE_USER_PATH},
 };
 
 // ------------------------------------------------------------------ errors
@@ -383,56 +383,63 @@ struct Op {
     contract: OperationContract,
 }
 
+/// A public routing operation: `200 {"mappings": [...]}` or a `{"detail"}` / field error.
+fn routing_op<T: ToSchema + serde::de::DeserializeOwned + 'static>(
+    path: &str,
+    id: &'static str,
+    summary: &'static str,
+    bad: &ResponseContract,
+) -> ContractResult<Op> {
+    Ok(Op {
+        method: "post",
+        path: path.to_string(),
+        id,
+        summary,
+        admin: false,
+        contract: OperationContract::from_responses(ResponseSet::new(
+            body::<MappingsResponse>(200),
+            Vec::new(),
+            named(vec![
+                ("bad_request", bad.clone()),
+                ("not_found", error(404)),
+                ("conflict", error(409)),
+                ("unsupported_media_type", error(415)),
+            ]),
+        )?)
+        .request::<T>()
+        .tags(["routing"])
+        .build()?,
+    })
+}
+
 fn operations() -> ContractResult<Vec<Op>> {
-    const ADMIN: &str = "/api/v1/admin";
+    const ADMIN: &str = crate::admin::API;
     let bad = bad_request()?;
     let id_param = |b: api_contracts::OperationBuilder| b.path_param("id", "integer", "Backend id");
-    let name_param = |b: api_contracts::OperationBuilder| {
-        b.path_param("name", "string", "Schedule name, e.g. sync_all_backend_users")
-    };
+    let name_param =
+        |b: api_contracts::OperationBuilder| b.path_param("name", "string", "Job name, e.g. sync_all_backend_users");
     let mut ops = Vec::new();
 
-    // ---- public routing API
-    ops.push(Op {
-        method: "post",
-        path: ID_TOKEN_PATH.to_string(),
-        id: "routingByIdToken",
-        summary: "Backends of a user (Microsoft ID token)",
-        admin: false,
-        contract: OperationContract::from_responses(ResponseSet::new(
-            body::<MappingsResponse>(200),
-            Vec::new(),
-            named(vec![
-                ("bad_request", bad.clone()),
-                ("not_found", error(404)),
-                ("conflict", error(409)),
-                ("unsupported_media_type", error(415)),
-            ]),
-        )?)
-        .request::<IdTokenRequest>()
-        .tags(["routing"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "post",
-        path: AGENT_ID_PATH.to_string(),
-        id: "routingByAgentId",
-        summary: "Backends of an agent",
-        admin: false,
-        contract: OperationContract::from_responses(ResponseSet::new(
-            body::<MappingsResponse>(200),
-            Vec::new(),
-            named(vec![
-                ("bad_request", bad.clone()),
-                ("not_found", error(404)),
-                ("conflict", error(409)),
-                ("unsupported_media_type", error(415)),
-            ]),
-        )?)
-        .request::<AgentIdRequest>()
-        .tags(["routing"])
-        .build()?,
-    });
+    // ---- public routing API (the deprecated aliases are documented under their public paths)
+    ops.push(routing_op::<IdTokenRequest>(
+        RESOLVE_USER_PATH,
+        "resolveUser",
+        "Backend of a user (Microsoft ID token)",
+        &bad,
+    )?);
+    ops.push(routing_op::<AgentIdRequest>(RESOLVE_AGENT_PATH, "resolveAgent", "Backend of an agent", &bad)?);
+    ops.push(routing_op::<IdTokenRequest>(
+        LEGACY_USER_PATHS[0],
+        "legacyResolveUser",
+        "Deprecated alias of POST /routing/resolve/user",
+        &bad,
+    )?);
+    ops.push(routing_op::<AgentIdRequest>(
+        LEGACY_AGENT_PATHS[0],
+        "legacyResolveAgent",
+        "Deprecated alias of POST /routing/resolve/agent",
+        &bad,
+    )?);
 
     // ---- admin API
     ops.push(Op {
@@ -487,25 +494,20 @@ fn operations() -> ContractResult<Vec<Op>> {
         .build()?,
     });
     // The router accepts PUT as an alias of PATCH.
-    for (method, id, summary) in [
-        ("patch", "adminUpdateBackend", "Update a backend"),
-        ("put", "adminReplaceBackend", "Update a backend (alias of PATCH, fields are still optional)"),
-    ] {
-        ops.push(Op {
-            method,
-            path: format!("{ADMIN}/backends/{{id}}"),
-            id,
-            summary,
-            admin: true,
-            contract: id_param(OperationContract::from_responses(admin_set(
-                body::<BackendWithMap>(200),
-                vec![("bad_request", bad.clone()), ("not_found", error(404))],
-            )?))
-            .request::<BackendUpdateRequest>()
-            .tags(["admin"])
-            .build()?,
-        });
-    }
+    ops.push(Op {
+        method: "patch",
+        path: format!("{ADMIN}/backends/{{id}}"),
+        id: "adminUpdateBackend",
+        summary: "Update a backend (every field optional)",
+        admin: true,
+        contract: id_param(OperationContract::from_responses(admin_set(
+            body::<BackendWithMap>(200),
+            vec![("bad_request", bad.clone()), ("not_found", error(404))],
+        )?))
+        .request::<BackendUpdateRequest>()
+        .tags(["admin"])
+        .build()?,
+    });
     ops.push(Op {
         method: "delete",
         path: format!("{ADMIN}/backends/{{id}}"),
@@ -572,8 +574,8 @@ fn operations() -> ContractResult<Vec<Op>> {
     });
     ops.push(Op {
         method: "get",
-        path: format!("{ADMIN}/schedules"),
-        id: "adminListSchedules",
+        path: format!("{ADMIN}/jobs"),
+        id: "adminListJobs",
         summary: "Schedules and their last run",
         admin: true,
         contract: OperationContract::from_responses(admin_set(body::<ScheduleList>(200), vec![])?)
@@ -582,8 +584,8 @@ fn operations() -> ContractResult<Vec<Op>> {
     });
     ops.push(Op {
         method: "get",
-        path: format!("{ADMIN}/schedules/{{name}}"),
-        id: "adminGetSchedule",
+        path: format!("{ADMIN}/jobs/{{name}}"),
+        id: "adminGetJob",
         summary: "One schedule and its last run",
         admin: true,
         contract: name_param(OperationContract::from_responses(admin_set(
@@ -593,29 +595,24 @@ fn operations() -> ContractResult<Vec<Op>> {
         .tags(["admin"])
         .build()?,
     });
-    for (method, id, summary) in [
-        ("patch", "adminUpdateSchedule", "Enable/disable a schedule or change its interval"),
-        ("put", "adminReplaceSchedule", "Same as PATCH (alias)"),
-    ] {
-        ops.push(Op {
-            method,
-            path: format!("{ADMIN}/schedules/{{name}}"),
-            id,
-            summary,
-            admin: true,
-            contract: name_param(OperationContract::from_responses(admin_set(
-                body::<ScheduleOut>(200),
-                vec![("bad_request", bad.clone()), ("not_found", error(404))],
-            )?))
-            .request::<ScheduleUpdateRequest>()
-            .tags(["admin"])
-            .build()?,
-        });
-    }
+    ops.push(Op {
+        method: "patch",
+        path: format!("{ADMIN}/jobs/{{name}}"),
+        id: "adminUpdateJob",
+        summary: "Enable/disable a job schedule or change its interval",
+        admin: true,
+        contract: name_param(OperationContract::from_responses(admin_set(
+            body::<ScheduleOut>(200),
+            vec![("bad_request", bad.clone()), ("not_found", error(404))],
+        )?))
+        .request::<ScheduleUpdateRequest>()
+        .tags(["admin"])
+        .build()?,
+    });
     ops.push(Op {
         method: "post",
-        path: format!("{ADMIN}/schedules/{{name}}/run"),
-        id: "adminRunSchedule",
+        path: format!("{ADMIN}/jobs/{{name}}/run"),
+        id: "adminRunJob",
         summary: "Run a task now",
         admin: true,
         contract: name_param(OperationContract::from_responses(admin_set(
@@ -627,7 +624,7 @@ fn operations() -> ContractResult<Vec<Op>> {
     });
     ops.push(Op {
         method: "get",
-        path: format!("{ADMIN}/task-runs"),
+        path: format!("{ADMIN}/runs"),
         id: "adminListRuns",
         summary: "Run history",
         admin: true,
@@ -648,7 +645,7 @@ fn operations() -> ContractResult<Vec<Op>> {
     });
     ops.push(Op {
         method: "get",
-        path: format!("{ADMIN}/conflicts"),
+        path: format!("{ADMIN}/sync/conflicts"),
         id: "adminListConflicts",
         summary: "Keys claimed by more than one active backend",
         admin: true,
@@ -669,12 +666,16 @@ pub fn document() -> ContractResult<Value> {
         if op.admin {
             extra.insert("security".into(), json!([{ "basicAuth": [] }]));
         }
+        if op.id.starts_with("legacy") {
+            extra.insert("deprecated".into(), json!(true));
+        }
         doc = doc.operation_with(op.method, &op.path, &op.contract, extra)?;
     }
     let mut value = doc.to_value();
     value["info"]["description"] = json!(
-        "Routes users and agents to their department backend. Routing endpoints are public; \
-         through nginx they are served under /routing/... instead of /api/v1/routing/... \
+        "Routes users and agents to their department backend. Routing endpoints are public and served under \
+         the same paths through nginx; the original /routing/auth/backend-info/... paths (also under /api/v1/) \
+         are deprecated aliases answered with a Deprecation header. \
          A key claimed by several backends answers 409 (ROUTING_CONFLICT_POLICY=reject). \
          Admin endpoints need the admin account (HTTP Basic, or username/password in the JSON body). \
          Errors are {\"detail\": ...} or {\"<field>\": [...]}."
@@ -691,27 +692,27 @@ mod tests {
     use crate::db::jobs::Schedule;
 
     const ROUTES: [(&str, &str); 21] = [
-        ("post", "/api/v1/routing/auth/backend-info/by-id-token/"),
-        ("post", "/api/v1/routing/auth/backend-info/by-agent-id/"),
-        ("post", "/api/v1/admin/login"),
-        ("get", "/api/v1/admin/backends"),
-        ("post", "/api/v1/admin/backends"),
-        ("get", "/api/v1/admin/backends/{id}"),
-        ("patch", "/api/v1/admin/backends/{id}"),
-        ("put", "/api/v1/admin/backends/{id}"),
-        ("delete", "/api/v1/admin/backends/{id}"),
-        ("get", "/api/v1/admin/backends/{id}/users"),
-        ("get", "/api/v1/admin/backends/{id}/agents"),
-        ("get", "/api/v1/admin/nginx"),
-        ("post", "/api/v1/admin/nginx/reload"),
-        ("get", "/api/v1/admin/schedules"),
-        ("get", "/api/v1/admin/schedules/{name}"),
-        ("patch", "/api/v1/admin/schedules/{name}"),
-        ("put", "/api/v1/admin/schedules/{name}"),
-        ("post", "/api/v1/admin/schedules/{name}/run"),
-        ("get", "/api/v1/admin/task-runs"),
-        ("get", "/api/v1/admin/sync"),
-        ("get", "/api/v1/admin/conflicts"),
+        ("post", "/routing/resolve/user"),
+        ("post", "/routing/resolve/agent"),
+        ("post", "/routing/auth/backend-info/by-id-token/"),
+        ("post", "/routing/auth/backend-info/by-agent-id/"),
+        ("post", "/admin/api/login"),
+        ("get", "/admin/api/backends"),
+        ("post", "/admin/api/backends"),
+        ("get", "/admin/api/backends/{id}"),
+        ("patch", "/admin/api/backends/{id}"),
+        ("delete", "/admin/api/backends/{id}"),
+        ("get", "/admin/api/backends/{id}/users"),
+        ("get", "/admin/api/backends/{id}/agents"),
+        ("get", "/admin/api/nginx"),
+        ("post", "/admin/api/nginx/reload"),
+        ("get", "/admin/api/jobs"),
+        ("get", "/admin/api/jobs/{name}"),
+        ("patch", "/admin/api/jobs/{name}"),
+        ("post", "/admin/api/jobs/{name}/run"),
+        ("get", "/admin/api/runs"),
+        ("get", "/admin/api/sync"),
+        ("get", "/admin/api/sync/conflicts"),
     ];
 
     fn refs(v: &Value, out: &mut Vec<String>) {
@@ -765,15 +766,19 @@ mod tests {
             let protected = !doc["paths"][path][method]["security"].is_null();
             assert_eq!(protected, path.contains("/admin/"), "{method} {path}");
         }
+        for (method, path) in ROUTES {
+            let deprecated = doc["paths"][path][method]["deprecated"] == json!(true);
+            assert_eq!(deprecated, path.contains("backend-info"), "{method} {path}");
+        }
     }
 
     #[test]
     fn path_parameters_are_declared() {
         let doc = document().unwrap();
-        let params = doc["paths"]["/api/v1/admin/backends/{id}/users"]["get"]["parameters"].as_array().unwrap();
+        let params = doc["paths"]["/admin/api/backends/{id}/users"]["get"]["parameters"].as_array().unwrap();
         assert!(params.iter().any(|p| p["name"] == "id" && p["in"] == "path"));
         assert!(params.iter().any(|p| p["name"] == "search" && p["in"] == "query"));
-        let params = doc["paths"]["/api/v1/admin/schedules/{name}"]["patch"]["parameters"].as_array().unwrap();
+        let params = doc["paths"]["/admin/api/jobs/{name}"]["patch"]["parameters"].as_array().unwrap();
         assert!(params.iter().any(|p| p["name"] == "name" && p["in"] == "path"));
     }
 

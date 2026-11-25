@@ -19,7 +19,7 @@ use crate::{
 
 const CONFLICT_LIST_LIMIT: i64 = 200;
 
-/// `GET /api/v1/admin/sync`
+/// `GET /admin/api/sync`
 pub async fn status(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -36,7 +36,7 @@ pub async fn status(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Respo
     }
 }
 
-/// `GET /api/v1/admin/conflicts`: keys claimed by more than one active backend.
+/// `GET /admin/api/sync/conflicts`: keys claimed by more than one active backend.
 pub async fn conflicts(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;

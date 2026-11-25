@@ -44,7 +44,7 @@ fn with_map(view: BackendView, map: Value) -> Value {
     v
 }
 
-/// `GET /api/v1/admin/backends`
+/// `GET /admin/api/backends`
 pub async fn list(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -55,7 +55,7 @@ pub async fn list(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Respons
     }
 }
 
-/// `GET /api/v1/admin/backends/{id}`
+/// `GET /admin/api/backends/{id}`
 pub async fn get_one(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -67,7 +67,7 @@ pub async fn get_one(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(id
     }
 }
 
-/// `POST /api/v1/admin/backends`
+/// `POST /admin/api/backends`
 pub async fn create(State(s): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
     let data = match authorized_body(&s, &headers, &body).await {
         Ok(d) => d,
@@ -103,7 +103,7 @@ pub async fn create(State(s): State<Arc<AppState>>, headers: HeaderMap, body: By
     }
 }
 
-/// `PATCH|PUT /api/v1/admin/backends/{id}` (every field optional).
+/// `PATCH /admin/api/backends/{id}` (every field optional).
 pub async fn update(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<i64>, body: Bytes) -> Response {
     let data = match authorized_body(&s, &headers, &body).await {
         Ok(d) => d,
@@ -156,7 +156,7 @@ pub async fn update(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(id)
     }
 }
 
-/// `DELETE /api/v1/admin/backends/{id}`: the backend and all its mappings.
+/// `DELETE /admin/api/backends/{id}`: the backend and all its mappings.
 pub async fn delete(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -201,7 +201,7 @@ async fn mappings(s: &AppState, headers: &HeaderMap, id: i64, q: &HashMap<String
     }
 }
 
-/// `GET /api/v1/admin/backends/{id}/users`
+/// `GET /admin/api/backends/{id}/users`
 pub async fn users(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -211,7 +211,7 @@ pub async fn users(
     mappings(&s, &headers, id, &q, Kind::Users).await
 }
 
-/// `GET /api/v1/admin/backends/{id}/agents`
+/// `GET /admin/api/backends/{id}/agents`
 pub async fn agents(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,

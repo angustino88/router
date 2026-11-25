@@ -31,7 +31,7 @@ async fn schedule_out(s: &AppState, sched: Schedule) -> Result<Value, sqlx::Erro
     Ok(v)
 }
 
-/// `GET /api/v1/admin/schedules`
+/// `GET /admin/api/jobs`
 pub async fn list(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -55,7 +55,7 @@ pub async fn list(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Respons
     .into_response()
 }
 
-/// `GET /api/v1/admin/schedules/{name}`
+/// `GET /admin/api/jobs/{name}`
 pub async fn get_one(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(name): Path<String>) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -70,7 +70,7 @@ pub async fn get_one(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(na
     }
 }
 
-/// `PATCH|PUT /api/v1/admin/schedules/{name}`: `enabled`, `interval_secs`.
+/// `PATCH /admin/api/jobs/{name}`: `enabled`, `interval_secs`.
 pub async fn update(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -105,7 +105,7 @@ pub async fn update(
     }
 }
 
-/// `POST /api/v1/admin/schedules/{name}/run`
+/// `POST /admin/api/jobs/{name}/run`
 pub async fn run(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(name): Path<String>) -> Response {
     if let Err(r) = super::auth::authorize(&s, &headers, None).await {
         return r;
@@ -120,7 +120,7 @@ pub async fn run(State(s): State<Arc<AppState>>, headers: HeaderMap, Path(name):
     }
 }
 
-/// `GET /api/v1/admin/task-runs?task=&limit=`
+/// `GET /admin/api/runs?task=&limit=`
 pub async fn runs(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,

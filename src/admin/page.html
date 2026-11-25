@@ -83,7 +83,7 @@
       <button data-tab="backends" class="on">Backend</button>
       <button data-tab="nginx">Nginx</button>
       <button data-tab="sync">Sync</button>
-      <button data-tab="schedules">Schedules</button>
+      <button data-tab="schedules">Jobs</button>
       <button data-tab="runs">Run history</button>
     </nav>
     <span class="spacer"></span>
@@ -313,7 +313,7 @@
     const u = $("login-user").value, p = $("login-pass").value;
     saveAuth(basic(u, p));
     try {
-      const r = await api("POST", "/api/v1/admin/login");
+      const r = await api("POST", "/admin/api/login");
       $("login-pass").value = "";
       showApp(r.username);
     } catch (err) { saveAuth(null); toast(err.message, true); }
@@ -338,7 +338,7 @@
   let backends = [], gitTargets = {};
   async function loadBackends() {
     try {
-      const [b, n] = await Promise.all([api("GET", "/api/v1/admin/backends"), api("GET", "/api/v1/admin/nginx")]);
+      const [b, n] = await Promise.all([api("GET", "/admin/api/backends"), api("GET", "/admin/api/nginx")]);
       backends = b.backends;
       gitTargets = {};
       n.entries.filter((e) => e.source === "git").forEach((e) => (gitTargets[e.prefix_key] = e.target));
@@ -391,7 +391,7 @@
   $("create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      const b = await api("POST", "/api/v1/admin/backends", {
+      const b = await api("POST", "/admin/api/backends", {
         name: $("c-name").value,
         upstream_url: $("c-url").value,
         backend_id: $("c-bid").value,
@@ -414,7 +414,7 @@
   $("edit-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      const r = await api("PATCH", "/api/v1/admin/backends/" + $("e-id").value, {
+      const r = await api("PATCH", "/admin/api/backends/" + $("e-id").value, {
         name: $("e-name").value,
         upstream_url: $("e-url").value,
         backend_id: $("e-bid").value,
@@ -435,7 +435,7 @@
     if (typed === null) return;
     if (typed.trim() !== b.prefix_key) { toast("prefix_key does not match; nothing was deleted.", true); return; }
     try {
-      const r = await api("DELETE", "/api/v1/admin/backends/" + b.id);
+      const r = await api("DELETE", "/admin/api/backends/" + b.id);
       toast(`Backend deleted (${r.deleted.users} users, ${r.deleted.agents} agents)`);
       if ($("e-id").value === String(b.id)) $("edit-panel").classList.add("hidden");
       if (mapBackend && mapBackend.id === b.id) $("map-panel").classList.add("hidden");
@@ -460,7 +460,7 @@
     const kind = $("m-kind").value;
     const q = new URLSearchParams({ search: $("m-search").value, active: $("m-active").value, limit: "1000" });
     try {
-      const r = await api("GET", `/api/v1/admin/backends/${mapBackend.id}/${kind}?` + q);
+      const r = await api("GET", `/admin/api/backends/${mapBackend.id}/${kind}?` + q);
       const [k, x, kl, xl] = kind === "users"
         ? ["user_id", "display_name", "Key (entra:tenant:object)", "Display name (legacy)"]
         : ["agent_id", "sku", "Agent UUID", "SKU (legacy)"];
@@ -478,7 +478,7 @@
   // ---- nginx
   async function loadNginx() {
     try {
-      const n = await api("GET", "/api/v1/admin/nginx");
+      const n = await api("GET", "/admin/api/nginx");
       const st = n.nginx_status;
       let html;
       if (!st) {
@@ -504,7 +504,7 @@
   $("reload-nginx-view").addEventListener("click", loadNginx);
   $("force-reload").addEventListener("click", async () => {
     try {
-      await api("POST", "/api/v1/admin/nginx/reload");
+      await api("POST", "/admin/api/nginx/reload");
       toast("Reload requested; nginx will handle it in a few seconds");
       setTimeout(loadNginx, 500);
     } catch (err) { toast(err.message, true); }
@@ -513,7 +513,7 @@
   // ---- sync
   async function loadSync() {
     try {
-      const [st, c] = await Promise.all([api("GET", "/api/v1/admin/sync"), api("GET", "/api/v1/admin/conflicts")]);
+      const [st, c] = await Promise.all([api("GET", "/admin/api/sync"), api("GET", "/admin/api/sync/conflicts")]);
       const lead = !st.sync_enabled ? '<span class="warn">Sync is off (SYNC_ENABLED=false).</span>'
         : st.leader ? '<span class="ok">● This replica is the sync leader.</span>'
         : '<span class="muted">○ Another replica is the sync leader (this one serves the API only).</span>';
@@ -560,7 +560,7 @@
   async function loadSchedules() {
     if (editingSchedule) return; // do not overwrite inputs while the user is typing
     try {
-      const r = await api("GET", "/api/v1/admin/schedules");
+      const r = await api("GET", "/admin/api/jobs");
       $("sched-off").classList.toggle("hidden", r.scheduler_enabled);
       $("sched-list").innerHTML = r.schedules.map((s) => `
         <div class="panel" data-name="${esc(s.name)}">
@@ -591,7 +591,7 @@
     const name = card.dataset.name;
     if (e.target.classList.contains("s-save")) {
       try {
-        await api("PATCH", "/api/v1/admin/schedules/" + name, {
+        await api("PATCH", "/admin/api/jobs/" + name, {
           enabled: card.querySelector(".s-enabled").checked,
           interval_secs: Number(card.querySelector(".s-interval").value),
         });
@@ -602,7 +602,7 @@
     }
     if (e.target.classList.contains("s-run")) {
       try {
-        const r = await api("POST", `/api/v1/admin/schedules/${name}/run`);
+        const r = await api("POST", `/admin/api/jobs/${name}/run`);
         toast("Started, run #" + r.run_id);
         editingSchedule = false;
         setTimeout(loadSchedules, 500);
@@ -615,7 +615,7 @@
   async function loadRuns() {
     const q = new URLSearchParams({ task: $("r-task").value, limit: "100" });
     try {
-      const r = await api("GET", "/api/v1/admin/task-runs?" + q);
+      const r = await api("GET", "/admin/api/runs?" + q);
       $("runs-body").innerHTML = r.runs.map((run) => {
         const st = run.status === "succeeded" ? "ok" : run.status === "failed" ? "bad" : "warn";
         const detail = run.result
@@ -636,7 +636,7 @@
 
   // ---- start
   if (auth) {
-    api("POST", "/api/v1/admin/login").then((r) => showApp(r.username)).catch((err) => { toast(err.message, true); showLogin(); });
+    api("POST", "/admin/api/login").then((r) => showApp(r.username)).catch((err) => { toast(err.message, true); showLogin(); });
   } else {
     showLogin();
   }

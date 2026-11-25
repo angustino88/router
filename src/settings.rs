@@ -45,7 +45,7 @@ pub struct Settings {
     /// Shared volume with the nginx container: generated map, reload request, nginx status.
     pub nginx_admin_dir: String,
 
-    /// Admin account for /admin/ and /api/v1/admin/*. Both must be set, otherwise admin is disabled.
+    /// Admin account for /admin/ and /admin/api/*. Both must be set, otherwise admin is disabled.
     pub admin_username: Option<String>,
     pub admin_password: Option<String>,
 

@@ -10,3 +10,4 @@ secrets/
 ssl_certificates/
 docker-compose*.yml
 Makefile
+openapi/

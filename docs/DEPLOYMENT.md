@@ -29,8 +29,8 @@ sequenceDiagram
     participant BE as Backend (dept A)
     FE->>MS: sign-in (MSAL)
     MS-->>FE: ID token
-    FE->>NG: POST /routing/auth/backend-info/by-id-token/ {id_token}
-    NG->>RT: /api/v1/routing/...
+    FE->>NG: POST /routing/resolve/user {id_token}
+    NG->>RT: POST /routing/resolve/user
     RT-->>FE: {"mappings": [{"backend_name": "Dept A", "prefix": "/t/abc123"}]}
     FE->>NG: /t/abc123/api/aad-login, /t/abc123/api/..., wss /t/abc123/ws/...
     NG->>BE: /api/..., /ws/... (prefix removed)
@@ -78,7 +78,7 @@ The backend needs no setting that names the Router (spec AUTH-11): it only knows
 
 In router mode the agent setup dialog of the frontend uses the user's backend prefix on the Router as the enroll
 URL (`https://router/t/<prefix_key>`), unless `VITE_AGENT_URL` overrides it. Agents then reach their backend
-through the Router's nginx. `POST /routing/auth/backend-info/by-agent-id/` resolves an agent UUID to its
+through the Router's nginx. `POST /routing/resolve/agent` resolves an agent UUID to its
 backend once the backend publishes it in its `agents` stream.
 
 ---
@@ -100,7 +100,7 @@ flowchart LR
 
 | Component | Replaces | Job |
 |---|---|---|
-| Routing API | `tenant/api.py` | `by-id-token`, `by-agent-id`: the backend a user/agent belongs to |
+| Routing API | `tenant/api.py` | `resolve/user`, `resolve/agent`: the backend a user/agent belongs to |
 | `/admin/` page + admin API | Django admin | create / edit / delete backends, view mappings, sync status, conflicts, schedules |
 | Stream sync | Celery periodic sync | snapshot + continuous long-poll of every backend's `users` and `agents` streams |
 | Scheduler | Celery beat | safety-net checks (digest), nginx map; schedules stored in the database, edited on the admin page |
@@ -138,9 +138,9 @@ flowchart LR
     ├── state.rs       state shared by the handlers
     ├── outbound.rs    HTTP client for Microsoft endpoints (proxy, CA bundle)
     ├── metrics.rs     Prometheus metrics
-    ├── routing/       the public API by-id-token / by-agent-id
+    ├── routing/       the public API resolve/user, resolve/agent
     │   └── aad.rs     Microsoft ID-token validation (cached keys)
-    ├── admin/         page /admin/ and API /api/v1/admin/*
+    ├── admin/         page /admin/ and API /admin/api/*
     │   ├── auth.rs        sign-in (account from .env)
     │   ├── backends.rs    backend CRUD, mappings
     │   ├── nginx.rs       nginx status, forced reload
@@ -272,7 +272,7 @@ Tokens are cached until five minutes before they expire and refreshed after a `4
 **The database is the only source.** The Router writes the nginx map (`backends.admin.map`, in the Docker volume
 `nginx_admin`) from the **active** backends that have a URL. The file is rewritten:
 1. **immediately** after a backend is created, edited or deleted;
-2. **periodically** by the `render_nginx_map` job (default 60 s, "Schedules" tab), only when its content changes;
+2. **periodically** by the `render_nginx_map` job (default 60 s, "Jobs" tab), only when its content changes;
 3. on **Force reload nginx**: the file is rewritten **and** nginx reloads even when nothing changed.
 
 The nginx container runs `deploy/nginx/watch-maps.sh`. Every few seconds it:
@@ -291,7 +291,7 @@ The nginx container runs `deploy/nginx/watch-maps.sh`. Every few seconds it:
   API answers 409 for them, so nobody is sent to the wrong department (spec CNS-6). Fix the assignment on the
   backends; the next sync removes the conflict.
 
-### "Schedules" tab (replaces Celery beat)
+### "Jobs" tab (replaces Celery beat)
 Each task has **Enabled** and **Interval (seconds)** (minimum 5), saved immediately, and **Run now** (409 when it
 is already running).
 
@@ -310,7 +310,7 @@ with its cursor in one transaction. A `mode: "reset"` answer starts a full resyn
 again every minute; this is not an error.
 
 Stored data: keys only. Users are `entra:<tid>:<oid>` (column `user_id`), agents are the agent UUID (column
-`agent_id`). `by-id-token` builds the key from the `tid` and `oid` claims of the ID token.
+`agent_id`). `resolve/user` builds the key from the `tid` and `oid` claims of the ID token.
 
 On the very first start the two sync schedules get their interval from, in order:
 1. the old Celery beat schedule (`django_celery_beat_*` tables) when the Django database is reused;
@@ -330,19 +330,35 @@ error. Sync results also count conflicting keys.
 
 Through nginx: `http://<host>:8080` (local) or `https://<domain>` (production).
 
-### 7.1 Routing API (no sign-in, same as the Django service)
+### 7.0 Endpoint overview
 
-nginx rewrites `/routing/...` to `/api/v1/routing/...`.
+Paths carry no version segment; changes are additive. The service and nginx use the same paths.
+
+| Area | Paths | Access |
+|---|---|---|
+| Routing | `POST /routing/resolve/user`, `POST /routing/resolve/agent` | public |
+| Admin UI | `/admin/` | admin account |
+| Admin API | `/admin/api/...` (section 7.2) | admin account |
+| OpenAPI | `GET /openapi.json` (also committed as `openapi/openapi.json`) | admin account |
+| Operations | `GET /healthz`, `GET /readyz`, `GET /metrics` | `/metrics` internal network only |
+
+### 7.1 Routing API (no sign-in)
 
 ```bash
-# By Microsoft ID token
-curl -X POST http://localhost:8080/routing/auth/backend-info/by-id-token/ \
+# User: Microsoft ID token
+curl -X POST http://localhost:8080/routing/resolve/user \
      -H "Content-Type: application/json" -d '{"id_token": "eyJ0eXAiOi..."}'
 
-# By agent UUID
-curl -X POST http://localhost:8080/routing/auth/backend-info/by-agent-id/ \
+# Agent: agent UUID
+curl -X POST http://localhost:8080/routing/resolve/agent \
      -H "Content-Type: application/json" -d '{"agent_id": "bbbbbbbb-1111-4000-8000-000000000001"}'
 ```
+
+**Deprecated aliases.** The paths of the original service, `/routing/auth/backend-info/by-id-token/` and
+`/routing/auth/backend-info/by-agent-id/` (with or without the trailing slash, and under `/api/v1/`), still
+work with the same request and response, and add `Deprecation: true` and
+`Link: </routing/resolve/user>; rel="successor-version"` (or `.../agent`). Move clients to the new paths; the
+aliases will be removed in a later release.
 
 | Result | Body |
 |---|---|
@@ -359,58 +375,59 @@ Send the account **either** as HTTP Basic auth (`curl -u admin:password ...`) **
 
 | Method | Path | Body / parameters | Result |
 |---|---|---|---|
-| POST | `/api/v1/admin/login` | – | 200 when the account is right |
-| GET | `/api/v1/admin/backends` | – | list of backends |
-| POST | `/api/v1/admin/backends` | `name` (required), `upstream_url`, `backend_id`, `is_active`, `computer_sync_version` | 201 + backend + map result (`nginx_map`) |
-| GET | `/api/v1/admin/backends/{id}` | – | one backend |
-| PATCH (PUT) | `/api/v1/admin/backends/{id}` | `name`, `upstream_url` (`""` = none), `backend_id`, `is_active`, `computer_sync_version` (all optional) | the backend after the change |
-| DELETE | `/api/v1/admin/backends/{id}` | – | `{"deleted": {"backend": 1, "users": n, "agents": m}}` |
-| GET | `/api/v1/admin/backends/{id}/users` | `?search=&active=true/false&limit=` | user claims |
-| GET | `/api/v1/admin/backends/{id}/agents` | same | agent claims |
-| GET | `/api/v1/admin/nginx` | – | routing table, problems, last reload result |
-| POST | `/api/v1/admin/nginx/reload` | – | 202: map rewritten and nginx reload forced |
-| GET | `/api/v1/admin/sync` | – | stream cursors, leadership |
-| GET | `/api/v1/admin/conflicts` | – | keys claimed by more than one backend |
-| GET | `/api/v1/admin/schedules` | – | schedules + last run |
-| GET | `/api/v1/admin/schedules/{name}` | – | one schedule |
-| PATCH (PUT) | `/api/v1/admin/schedules/{name}` | `enabled`, `interval_secs` | the schedule after the change |
-| POST | `/api/v1/admin/schedules/{name}/run` | – | 202 `{"run_id": ...}`, 409 when already running |
-| GET | `/api/v1/admin/task-runs` | `?task=&limit=` | run history |
+| POST | `/admin/api/login` | – | 200 when the account is right |
+| GET | `/admin/api/backends` | – | list of backends |
+| POST | `/admin/api/backends` | `name` (required), `upstream_url`, `backend_id`, `is_active`, `computer_sync_version` | 201 + backend + map result (`nginx_map`) |
+| GET | `/admin/api/backends/{id}` | – | one backend |
+| PATCH | `/admin/api/backends/{id}` | `name`, `upstream_url` (`""` = none), `backend_id`, `is_active`, `computer_sync_version` (all optional) | the backend after the change |
+| DELETE | `/admin/api/backends/{id}` | – | `{"deleted": {"backend": 1, "users": n, "agents": m}}` |
+| GET | `/admin/api/backends/{id}/users` | `?search=&active=true/false&limit=` | user claims |
+| GET | `/admin/api/backends/{id}/agents` | same | agent claims |
+| GET | `/admin/api/nginx` | – | routing table, problems, last reload result |
+| POST | `/admin/api/nginx/reload` | – | 202: map rewritten and nginx reload forced |
+| GET | `/admin/api/sync` | – | stream cursors, leadership |
+| GET | `/admin/api/sync/conflicts` | – | keys claimed by more than one backend |
+| GET | `/admin/api/jobs` | – | jobs with their schedule and last run |
+| GET | `/admin/api/jobs/{name}` | – | one job |
+| PATCH | `/admin/api/jobs/{name}` | `enabled`, `interval_secs` | the job after the change |
+| POST | `/admin/api/jobs/{name}/run` | – | 202 `{"run_id": ...}`, 409 when already running |
+| GET | `/admin/api/runs` | `?task=&limit=` | run history |
 
 Examples:
 
 ```bash
 # Create a backend with its URL and backend_id (password in the body)
-curl -X POST http://localhost:8080/api/v1/admin/backends \
+curl -X POST http://localhost:8080/admin/api/backends \
      -H "Content-Type: application/json" \
      -d '{"username":"admin","password":"secret","name":"Dept A","upstream_url":"https://dept-a.example.com:8443","backend_id":"dept_a"}'
 
 # Force an nginx reload
-curl -u admin:secret -X POST http://localhost:8080/api/v1/admin/nginx/reload
+curl -u admin:secret -X POST http://localhost:8080/admin/api/nginx/reload
 
 # Deactivate backend id=3
-curl -u admin:secret -X PATCH http://localhost:8080/api/v1/admin/backends/3 \
+curl -u admin:secret -X PATCH http://localhost:8080/admin/api/backends/3 \
      -H "Content-Type: application/json" -d '{"is_active": false}'
 
 # Run the agent stream check now
-curl -u admin:secret -X POST http://localhost:8080/api/v1/admin/schedules/sync_all_backend_agents/run
+curl -u admin:secret -X POST http://localhost:8080/admin/api/jobs/sync_all_backend_agents/run
 ```
 
 Wrong account: `401 {"detail": "Invalid username or password."}`. No account in `.env`: `503`.
 
 ### 7.3 OpenAPI for Apidog
 
-The OpenAPI 3.1 document is generated from the `api-contracts` crate (`src/openapi/mod.rs`).
+The OpenAPI 3.1 document is generated from the `api-contracts` crate (`src/openapi/mod.rs`) and committed as
+**`openapi/openapi.json`**. Use that file for Apidog or client generation.
 
 ```bash
-make openapi                                                             # no database needed
-curl -u admin:secret http://localhost:8080/openapi.json -o openapi.json   # over HTTP (admin account)
+make openapi          # regenerate openapi/openapi.json after an API change, then commit it
+make openapi-check    # fails when the committed file is out of date (CI runs the same check)
+curl -u admin:secret http://localhost:8080/openapi.json -o openapi.json   # from a running service
 ```
 
-In Apidog: **Import data → OpenAPI/Swagger**, then pick `openapi.json`. Responses keep the Django REST Framework
-shapes (`{"detail": ...}`, `{"mappings": [...]}`); routing paths are documented as the service's own
-`/api/v1/routing/...` (clients call `/routing/...` through nginx). The test `document_lists_every_route`
-fails when a route is missing from the document.
+In Apidog: **Import data → OpenAPI/Swagger**, then pick `openapi/openapi.json`. Errors are `{"detail": ...}` or
+`{"<field>": [...]}`; the deprecated routing aliases are marked `deprecated: true`. The test
+`document_lists_every_route` fails when a route is missing from the document.
 
 ### 7.4 Backend sync API used by the Router
 
@@ -479,10 +496,10 @@ The log shows `schedule created` (first start), `sync leadership acquired`, `sch
    backend.** Take the address from the old Django `backends.map`: the line `qlporzk7ct  another-host.com:8443;`
    becomes the URL `https://another-host.com:8443` (the old production always used https). Without a URL nginx
    answers 404 for that backend.
-2. The "Nginx" tab shows **● OK**. The "Sync" tab lists the streams of every backend. On "Schedules", click
+2. The "Nginx" tab shows **● OK**. The "Sync" tab lists the streams of every backend. On "Jobs", click
    **Run now** for each sync job and check `failed: 0` in "Run history".
-3. Call `by-agent-id` with a real agent UUID: 200.
-4. Sign in from the frontend in router mode (`by-id-token` flow).
+3. Call `POST /routing/resolve/agent` with a real agent UUID: 200.
+4. Sign in from the frontend in router mode (`resolve/user` flow).
 
 ### 8.5 Rolling back to Django
 The Router drops no Django table or column (it only adds columns with defaults). Stop it and start the old Django
@@ -517,10 +534,10 @@ well); every replica serves the routing API and the admin page. "Run now" runs o
 |---|---|---|
 | Admin says "Admin is disabled…" (503) | `ADMIN_USERNAME` or `ADMIN_PASSWORD` missing | add them to `.env`, `docker compose up -d` |
 | Right password, still 401 | `.env` changed but the container was not recreated | `docker compose up -d --force-recreate router` |
-| `by-id-token` always "Microsoft Token is invalid or expired" | Microsoft unreachable (proxy/CA), `AAD_AUDIENCE` is not the frontend client ID, or expired token | look for `JWKS refresh failed` in the log; set `HTTPS_PROXY` if needed |
+| `resolve/user` always "Microsoft Token is invalid or expired" | Microsoft unreachable (proxy/CA), `AAD_AUDIENCE` is not the frontend client ID, or expired token | look for `JWKS refresh failed` in the log; set `HTTPS_PROXY` if needed |
 | Frontend: "Your account is not assigned to a lab yet" | the user's backend has not published the user (no Entra binding, or stream not synced yet) | "Sync" tab of the Router; bind the user on the backend (`manage.py bind_entra_identity`, see section 1) |
 | Frontend: CORS error on `/routing/...` | frontend origin not in `CORS_ALLOWED_ORIGINS` | set it, `docker compose up -d` (nginx logs the origins at start) |
-| `409` from by-id-token | the user is claimed by two backends | "Sync" tab → Conflicts; remove the duplicate assignment on one backend |
+| `409` from resolve/user | the user is claimed by two backends | "Sync" tab → Conflicts; remove the duplicate assignment on one backend |
 | Sync: `HTTP 401` / `403` | wrong token or Entra role | check the token file/hash or the app role assignment |
 | Sync: `reports backend_id "x", the registry expects "y"` | the URL points at another backend, or a typo in backend_id | fix the URL or backend_id on the admin page |
 | Sync: `HTTP 404` without error code | backend not routed by nginx, or wrong `NGINX_INTERNAL_BASE_URL` | "Nginx" tab; it must be `http://nginx:8080` |
@@ -528,7 +545,7 @@ well); every replica serves the routing API and the admin page. "Run now" runs o
 | Admin says "... declared in the static backends.map" when setting a URL | the static file still has that backend | remove the line from `backends.map`, wait a few seconds, save again |
 | "Nginx" tab: "No status received from nginx yet" | nginx does not run `watch-maps.sh` or does not share the `nginx_admin` volume | check `command` and `volumes` of nginx in the compose file |
 | "Nginx" tab: ● ERROR `nginx -t failed` | broken map or configuration; nginx keeps the old one | read the error on the tab, fix, Force reload |
-| Schedules do not run | `SYNC_ENABLED=false`, schedule disabled, or this replica is not the leader | "Schedules" and "Sync" tabs |
+| Schedules do not run | `SYNC_ENABLED=false`, schedule disabled, or this replica is not the leader | "Jobs" and "Sync" tabs |
 | Log: `database not ready` | PostgreSQL not ready or wrong `DATABASE_URL` | retried 30 times (about a minute); check URL, user, password |
 
 ---
@@ -539,10 +556,10 @@ well); every replica serves the routing API and the admin page. "Run now" runs o
   `deploy/nginx/prod/nginx.conf`).
 - The admin page keeps the credentials in `sessionStorage` (gone when the tab closes); "Sign out" clears them.
 - Every failed sign-in waits 0.5 s and logs `admin login failed`.
-- Restrict `/admin/` and `/api/v1/admin/` to the internal network, e.g. in the production nginx:
+- Restrict `/admin/` (page and API) to the internal network, e.g. in the production nginx:
 
   ```nginx
-  location ~ ^/(admin|api/v1/admin)/ {
+  location ^~ /admin/ {
       allow 10.0.0.0/8;
       deny all;
       proxy_pass http://$tenant_svc;

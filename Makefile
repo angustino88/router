@@ -1,4 +1,4 @@
-.PHONY: help build test test-db lint fmt check openapi dev-up dev-down dev-logs prod-up prod-down prod-logs
+.PHONY: help build test test-db lint fmt check openapi openapi-check dev-up dev-down dev-logs prod-up prod-down prod-logs
 
 DEV  := docker compose -f docker-compose.dev.yml
 PROD := docker compose -f docker-compose.prod.yml
@@ -23,10 +23,14 @@ lint: ## Formatting and clippy, as in CI
 fmt: ## Format the code
 	cargo fmt --all
 
-check: lint test ## Everything CI runs on the Rust code
+check: lint test openapi-check ## Everything CI runs on the Rust code
 
-openapi: ## Write openapi.json (no database needed)
-	cargo run --quiet -- openapi > openapi.json
+openapi: ## Regenerate the committed OpenAPI document openapi/openapi.json (no database needed)
+	cargo run --quiet --locked -- openapi > openapi/openapi.json
+
+openapi-check: ## Fail when openapi/openapi.json is out of date
+	cargo run --quiet --locked -- openapi | diff -u openapi/openapi.json - \
+		|| (echo "openapi/openapi.json is out of date: run make openapi" && exit 1)
 
 dev-up: ## Start the development stack
 	$(DEV) up -d --build

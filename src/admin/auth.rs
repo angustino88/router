@@ -78,7 +78,7 @@ pub async fn authorize(
     Ok(user)
 }
 
-/// `POST /api/v1/admin/login`
+/// `POST /admin/api/login`
 pub async fn login(State(s): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
     let data = match crate::http::api::request_data(&headers, &body) {
         Ok(d) => d,
