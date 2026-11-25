@@ -1,0 +1,15 @@
+# ==========================================
+# Tenant backends (git-managed)
+# One line per backend:  <prefix_key>  <host>:<port>;   or   <prefix_key>  <scheme>://<host>:<port>;
+# (host:port alone uses https://). Backends created on /admin/ with a URL do NOT go here:
+# they are generated into tenants-admin/backends.admin.map automatically.
+#
+#   http(s)://<nginx>/t/<backend_id>/<uri>  ->  https://<host>:<port>/<uri>
+#
+# - Prefer hostnames over IPs: nginx re-resolves them every 10s,
+#   so an IP change needs no edit here.
+# - Every line must end with ";".
+# - After editing: nginx -t && nginx -s reload
+# ==========================================
+
+# abc123      another-host.hc.apac.bosch.com:443;

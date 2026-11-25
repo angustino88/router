@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Router admin</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6ec;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+    --chip: #eef1f5; --input: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218; --panel: #171b23; --text: #e6e9ef; --muted: #9aa4b2; --line: #2a303b;
+      --accent: #4c8dff; --accent-text: #0b0e13; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+      --chip: #222834; --input: #10141b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+           background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { background: none; border: 0; color: var(--muted); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+  nav button.on { background: var(--chip); color: var(--text); font-weight: 600; }
+  .spacer { flex: 1; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 15px; margin: 0 0 12px; }
+  .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  label.inline { flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--text); }
+  input[type=text], input[type=password], input[type=number], input[type=search], select {
+    background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 9px; font: inherit; min-width: 0; }
+  button.btn { background: var(--chip); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+               padding: 7px 12px; font: inherit; cursor: pointer; white-space: nowrap; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  #msg { position: fixed; right: 16px; bottom: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px;
+         background: var(--panel); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0,0,0,.15); display: none; }
+  #msg.err { border-color: var(--bad); }
+  .login { max-width: 360px; margin: 10vh auto; }
+  .login form { display: flex; flex-direction: column; gap: 12px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow: auto; max-height: 360px; margin: 6px 0 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .hidden { display: none !important; }
+  details summary { cursor: pointer; color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div id="login-view" class="login hidden">
+  <div class="panel">
+    <h2>Router admin sign in</h2>
+    <form id="login-form">
+      <label>Username <input type="text" id="login-user" autocomplete="username" required></label>
+      <label>Password <input type="password" id="login-pass" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <div class="hint">The account is set in the <code>.env</code> file (ADMIN_USERNAME, ADMIN_PASSWORD).</div>
+    </form>
+  </div>
+</div>
+
+<div id="app-view" class="hidden">
+  <header>
+    <h1>Router admin</h1>
+    <nav>
+      <button data-tab="backends" class="on">Backend</button>
+      <button data-tab="nginx">Nginx</button>
+      <button data-tab="sync">Sync</button>
+      <button data-tab="schedules">Schedules</button>
+      <button data-tab="runs">Run history</button>
+    </nav>
+    <span class="spacer"></span>
+    <span class="muted" id="who"></span>
+    <button class="btn" id="logout">Sign out</button>
+  </header>
+
+  <main>
+    <!-- ======================= Backends ======================= -->
+    <section id="tab-backends">
+      <div class="panel">
+        <h2>Add backend</h2>
+        <form id="create-form" class="row">
+          <label style="flex:1 1 200px">Name <input type="text" id="c-name" maxlength="255" required></label>
+          <label style="flex:1 1 280px">Backend URL <input type="text" id="c-url" maxlength="255" placeholder="http://host.docker.internal:8001"></label>
+          <label style="flex:0 1 160px">backend_id <input type="text" id="c-bid" maxlength="100" placeholder="dept_a"></label>
+          <label class="inline"><input type="checkbox" id="c-active" checked> Active</label>
+          <button class="btn primary" type="submit">Create</button>
+        </form>
+        <div class="hint">prefix_key is generated automatically (10 characters). With a URL, nginx picks up the backend within a few seconds
+          (<code>/t/&lt;prefix_key&gt;/…</code> → URL). Editing, deactivating or deleting a backend updates nginx automatically too.
+          <b>backend_id</b> is the backend's <code>BACKEND_ID</code> setting: the sync refuses a backend whose <code>/internal/info</code>
+          reports another id (protection against a wrong URL), and Entra sync authentication needs it for the token audience.</div>
+      </div>
+
+      <div class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h2 style="margin:0">Backends</h2>
+          <button class="btn" id="reload-backends">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>ID</th><th>prefix_key</th><th>Name</th><th>backend_id</th><th>URL (nginx)</th><th>Status</th>
+              <th class="num">Users (stream v.)</th><th class="num">Agents (stream v.)</th><th>Last modified (UTC)</th><th></th>
+            </tr></thead>
+            <tbody id="backends-body"><tr><td colspan="10" class="muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="edit-panel">
+        <h2>Edit backend <span class="mono" id="e-key"></span></h2>
+        <form id="edit-form" class="row">
+          <input type="hidden" id="e-id">
+          <label style="flex:1 1 200px">Name <input type="text" id="e-name" maxlength="255" required></label>
+          <label style="flex:1 1 280px">Backend URL <input type="text" id="e-url" maxlength="255" placeholder="http://host.docker.internal:8001 (empty = not routed)"></label>
+          <label style="flex:0 1 160px">backend_id <input type="text" id="e-bid" maxlength="100" placeholder="dept_a (empty = not checked)"></label>
+          <label class="inline"><input type="checkbox" id="e-active"> Active</label>
+          <button class="btn primary" type="submit">Save</button>
+          <button class="btn" type="button" id="edit-cancel">Close</button>
+        </form>
+      </div>
+
+      <div class="panel hidden" id="map-panel">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h2 style="margin:0">Mappings of <span id="m-title"></span></h2>
+          <button class="btn" id="map-close">Close</button>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <label>Type
+            <select id="m-kind"><option value="users">User</option><option value="agents">Agent</option></select>
+          </label>
+          <label style="flex:1 1 200px">Search <input type="search" id="m-search" placeholder="key / agent UUID"></label>
+          <label>Status
+            <select id="m-active"><option value="">All</option><option value="true">Active</option><option value="false">Inactive</option></select>
+          </label>
+        </div>
+        <div class="muted" id="m-count"></div>
+        <div class="table-wrap"><table><thead id="m-head"></thead><tbody id="m-body"></tbody></table></div>
+        <div class="hint">Mappings are read-only: they are written by the sync from each backend.</div>
+      </div>
+    </section>
+
+    <!-- ======================= Nginx ======================= -->
+    <section id="tab-nginx" class="hidden">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h2 style="margin:0">Nginx status</h2>
+          <div class="actions">
+            <button class="btn" id="reload-nginx-view">Refresh</button>
+            <button class="btn primary" id="force-reload">Force reload nginx</button>
+          </div>
+        </div>
+        <div id="nginx-status" style="margin-top:10px"></div>
+        <div class="hint">The map file is regenerated from the database right after a backend is created/edited/deleted, on the <code>render_nginx_map</code>
+          schedule ("Schedules" tab) and on Force. Nginx tests itself (<code>nginx -t</code>) and reloads when the file changes.</div>
+      </div>
+      <div class="panel hidden" id="nginx-problems-panel">
+        <h2 class="warn">Needs attention</h2>
+        <ul id="nginx-problems" style="margin:0;padding-left:18px"></ul>
+      </div>
+      <div class="panel">
+        <h2>Routing table <span class="muted" style="font-weight:400" id="nginx-files"></span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>prefix_key</th><th>Target</th><th>Source</th></tr></thead>
+            <tbody id="nginx-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= Sync ======================= -->
+    <section id="tab-sync" class="hidden">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h2 style="margin:0">Routing sync</h2>
+          <button class="btn" id="reload-sync">Refresh</button>
+        </div>
+        <div id="sync-state" style="margin-top:10px"></div>
+        <div class="hint">Each active backend has a <code>users</code> and an <code>agents</code> long-poll loop on the leader replica.
+          A stream appears here after its first full sync; a backend that does not advertise a stream yet is retried every minute.</div>
+      </div>
+      <div class="panel">
+        <h2>Stream cursors</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Backend</th><th>Stream</th><th>Epoch</th><th class="num">Version</th><th>Updated (UTC)</th></tr></thead>
+            <tbody id="sync-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Conflicts <span class="muted" style="font-weight:400" id="conflict-policy"></span></h2>
+        <div id="conflicts"></div>
+        <div class="hint">A key claimed by more than one active backend is a conflict. With the <code>reject</code> policy the routing API
+          answers 409 for it, so the user or agent is never sent to the wrong department. Fix the assignment on the backends; the
+          sync removes the conflict automatically.</div>
+      </div>
+    </section>
+
+    <!-- ======================= Schedules ======================= -->
+    <section id="tab-schedules" class="hidden">
+      <div class="panel hidden" id="sched-off">
+        <span class="warn">The scheduler is off (SYNC_ENABLED=false in .env).</span>
+        Schedules do not run on their own, but "Run now" still works.
+      </div>
+      <div class="grid2" id="sched-list"></div>
+    </section>
+
+    <!-- ======================= Runs ======================= -->
+    <section id="tab-runs" class="hidden">
+      <div class="panel">
+        <div class="row" style="margin-bottom:10px">
+          <label>Task
+            <select id="r-task">
+              <option value="">All</option>
+              <option value="sync_all_backend_users">sync_all_backend_users</option>
+              <option value="sync_all_backend_agents">sync_all_backend_agents</option>
+              <option value="render_nginx_map">render_nginx_map</option>
+            </select>
+          </label>
+          <button class="btn" id="reload-runs">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Task</th><th>Trigger</th><th>Status</th><th>Started (UTC)</th>
+              <th class="num">Duration</th><th>Result</th></tr></thead>
+            <tbody id="runs-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="msg"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const TASK_LABEL = {
+    sync_all_backend_users: "Check user stream (sync_all_backend_users)",
+    sync_all_backend_agents: "Check agent stream (sync_all_backend_agents)",
+    render_nginx_map: "Generate nginx map (render_nginx_map)",
+  };
+
+  // ---- credentials: kept in memory; sessionStorage only as a convenience for reloads.
+  let auth = null;
+  try { auth = sessionStorage.getItem("tenant-admin-auth"); } catch (e) {}
+  const saveAuth = (v) => { auth = v; try { v ? sessionStorage.setItem("tenant-admin-auth", v) : sessionStorage.removeItem("tenant-admin-auth"); } catch (e) {} };
+  const basic = (u, p) => "Basic " + btoa(String.fromCharCode(...new TextEncoder().encode(u + ":" + p)));
+
+  let msgTimer = null;
+  function toast(text, isErr) {
+    const el = $("msg");
+    el.textContent = text;
+    el.className = isErr ? "err" : "";
+    el.style.display = "block";
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => (el.style.display = "none"), isErr ? 7000 : 3000);
+  }
+
+  function errorText(body, status) {
+    if (!body || typeof body !== "object") return "Error " + status;
+    if (body.detail) return body.detail;
+    return Object.entries(body).map(([k, v]) => k + ": " + (Array.isArray(v) ? v.join(" ") : v)).join("; ");
+  }
+
+  async function api(method, path, data) {
+    const opts = { method, headers: { Authorization: auth || "" } };
+    if (data !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(data); }
+    const res = await fetch(path, opts);
+    let body = null;
+    try { body = await res.json(); } catch (e) {}
+    if (res.status === 401 || res.status === 503) {
+      if (res.status === 401) { saveAuth(null); showLogin(); }
+      throw new Error(errorText(body, res.status));
+    }
+    if (!res.ok) throw new Error(errorText(body, res.status));
+    return body;
+  }
+
+  // ---- views
+  function showLogin() { $("app-view").classList.add("hidden"); $("login-view").classList.remove("hidden"); }
+  function showApp(user) {
+    $("login-view").classList.add("hidden"); $("app-view").classList.remove("hidden");
+    $("who").textContent = user ? "Signed in as " + user : "";
+    switchTab(currentTab);
+  }
+
+  $("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const u = $("login-user").value, p = $("login-pass").value;
+    saveAuth(basic(u, p));
+    try {
+      const r = await api("POST", "/api/v1/admin/login");
+      $("login-pass").value = "";
+      showApp(r.username);
+    } catch (err) { saveAuth(null); toast(err.message, true); }
+  });
+  $("logout").addEventListener("click", () => { saveAuth(null); showLogin(); });
+
+  let currentTab = "backends", pollTimer = null;
+  document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+    ["backends", "nginx", "sync", "schedules", "runs"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== tab));
+    clearInterval(pollTimer);
+    if (tab === "backends") loadBackends();
+    if (tab === "nginx") { loadNginx(); pollTimer = setInterval(loadNginx, 3000); }
+    if (tab === "sync") { loadSync(); pollTimer = setInterval(loadSync, 5000); }
+    if (tab === "schedules") { loadSchedules(); pollTimer = setInterval(loadSchedules, 5000); }
+    if (tab === "runs") { loadRuns(); pollTimer = setInterval(loadRuns, 5000); }
+  }
+
+  // ---- backends
+  let backends = [], gitTargets = {};
+  async function loadBackends() {
+    try {
+      const [b, n] = await Promise.all([api("GET", "/api/v1/admin/backends"), api("GET", "/api/v1/admin/nginx")]);
+      backends = b.backends;
+      gitTargets = {};
+      n.entries.filter((e) => e.source === "git").forEach((e) => (gitTargets[e.prefix_key] = e.target));
+      renderBackends();
+    } catch (err) { toast(err.message, true); }
+  }
+  function renderBackends() {
+    const body = $("backends-body");
+    if (!backends.length) { body.innerHTML = '<tr><td colspan="10" class="muted">No backends yet.</td></tr>'; return; }
+    body.innerHTML = backends.map((b) => `
+      <tr>
+        <td>${b.id}</td>
+        <td class="mono">${esc(b.prefix_key)}</td>
+        <td>${esc(b.name)}</td>
+        <td class="mono">${b.backend_id ? esc(b.backend_id) : '<span class="muted">not set</span>'}</td>
+        <td>${urlCell(b)}</td>
+        <td>${b.is_active ? '<span class="ok">● active</span>' : '<span class="muted">○ inactive</span>'}</td>
+        <td class="num">${b.users_active} <span class="muted">(${b.users_version ?? "–"})</span></td>
+        <td class="num">${b.agents_active} <span class="muted">(${b.agents_version ?? "–"})</span></td>
+        <td class="muted">${esc(b.modified.replace("T", " ").replace("Z", ""))}</td>
+        <td><div class="actions">
+          <button class="btn" data-act="edit" data-id="${b.id}">Edit</button>
+          <button class="btn" data-act="map" data-id="${b.id}">Mapping</button>
+          <button class="btn danger" data-act="del" data-id="${b.id}">Delete</button>
+        </div></td>
+      </tr>`).join("");
+  }
+  function urlCell(b) {
+    if (gitTargets[b.prefix_key]) return `<span class="mono">${esc(gitTargets[b.prefix_key])}</span> <span class="chip">backends.map</span>`;
+    if (b.upstream_url) return `<span class="mono">${esc(b.upstream_url)}</span>` + (b.is_active ? "" : ' <span class="chip muted">not routed (inactive)</span>');
+    return '<span class="warn">not set – nginx returns 404</span>';
+  }
+  function mapResult(r) {
+    const m = r && r.nginx_map;
+    if (!m) return "";
+    if (m.error) { toast("Saved to the database, but the nginx map could not be generated: " + m.error, true); return null; }
+    return m.changed ? " – nginx will reload in a few seconds" : "";
+  }
+  $("reload-backends").addEventListener("click", loadBackends);
+  $("backends-body").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const b = backends.find((x) => x.id === Number(btn.dataset.id));
+    if (!b) return;
+    if (btn.dataset.act === "edit") openEdit(b);
+    if (btn.dataset.act === "map") openMappings(b);
+    if (btn.dataset.act === "del") deleteBackend(b);
+  });
+
+  $("create-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const b = await api("POST", "/api/v1/admin/backends", {
+        name: $("c-name").value,
+        upstream_url: $("c-url").value,
+        backend_id: $("c-bid").value,
+        is_active: $("c-active").checked,
+      });
+      $("c-name").value = ""; $("c-url").value = ""; $("c-bid").value = "";
+      const extra = mapResult(b);
+      if (extra !== null) toast(`Created "${b.name}" – prefix_key: ${b.prefix_key}${extra}`);
+      loadBackends();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  function openEdit(b) {
+    $("e-id").value = b.id; $("e-key").textContent = b.prefix_key;
+    $("e-name").value = b.name; $("e-url").value = b.upstream_url || ""; $("e-bid").value = b.backend_id || ""; $("e-active").checked = b.is_active;
+    $("edit-panel").classList.remove("hidden");
+    $("edit-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  $("edit-cancel").addEventListener("click", () => $("edit-panel").classList.add("hidden"));
+  $("edit-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api("PATCH", "/api/v1/admin/backends/" + $("e-id").value, {
+        name: $("e-name").value,
+        upstream_url: $("e-url").value,
+        backend_id: $("e-bid").value,
+        is_active: $("e-active").checked,
+      });
+      $("edit-panel").classList.add("hidden");
+      const extra = mapResult(r);
+      if (extra !== null) toast("Saved" + extra);
+      loadBackends();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  async function deleteBackend(b) {
+    const text = `Delete backend "${b.name}" (${b.prefix_key})?\n` +
+      `All user/agent mappings of this backend are deleted too (active: ${b.users_active} users, ${b.agents_active} agents).\n\n` +
+      `Type the prefix_key to confirm:`;
+    const typed = window.prompt(text);
+    if (typed === null) return;
+    if (typed.trim() !== b.prefix_key) { toast("prefix_key does not match; nothing was deleted.", true); return; }
+    try {
+      const r = await api("DELETE", "/api/v1/admin/backends/" + b.id);
+      toast(`Backend deleted (${r.deleted.users} users, ${r.deleted.agents} agents)`);
+      if ($("e-id").value === String(b.id)) $("edit-panel").classList.add("hidden");
+      if (mapBackend && mapBackend.id === b.id) $("map-panel").classList.add("hidden");
+      loadBackends();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  // ---- mappings (read-only)
+  let mapBackend = null, searchTimer = null;
+  function openMappings(b) {
+    mapBackend = b;
+    $("m-title").textContent = `${b.name} (${b.prefix_key})`;
+    $("map-panel").classList.remove("hidden");
+    loadMappings();
+    $("map-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  $("map-close").addEventListener("click", () => { $("map-panel").classList.add("hidden"); mapBackend = null; });
+  ["m-kind", "m-active"].forEach((id) => $(id).addEventListener("change", loadMappings));
+  $("m-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadMappings, 300); });
+  async function loadMappings() {
+    if (!mapBackend) return;
+    const kind = $("m-kind").value;
+    const q = new URLSearchParams({ search: $("m-search").value, active: $("m-active").value, limit: "1000" });
+    try {
+      const r = await api("GET", `/api/v1/admin/backends/${mapBackend.id}/${kind}?` + q);
+      const [k, x, kl, xl] = kind === "users"
+        ? ["user_id", "display_name", "Key (entra:tenant:object)", "Display name (legacy)"]
+        : ["agent_id", "sku", "Agent UUID", "SKU (legacy)"];
+      $("m-head").innerHTML = `<tr><th>${kl}</th><th>${xl}</th><th>Status</th><th>Created (UTC)</th><th>Modified (UTC)</th></tr>`;
+      $("m-body").innerHTML = r.items.map((m) => `
+        <tr><td class="mono">${esc(m[k])}</td><td>${esc(m[x])}</td>
+        <td>${m.is_active ? '<span class="ok">active</span>' : '<span class="muted">inactive</span>'}</td>
+        <td class="muted">${esc(m.created.replace("T", " ").replace("Z", ""))}</td>
+        <td class="muted">${esc(m.modified.replace("T", " ").replace("Z", ""))}</td></tr>`).join("")
+        || '<tr><td colspan="5" class="muted">No data.</td></tr>';
+      $("m-count").textContent = r.total > r.count ? `Showing ${r.count} of ${r.total}` : `${r.total} rows`;
+    } catch (err) { toast(err.message, true); }
+  }
+
+  // ---- nginx
+  async function loadNginx() {
+    try {
+      const n = await api("GET", "/api/v1/admin/nginx");
+      const st = n.nginx_status;
+      let html;
+      if (!st) {
+        html = '<span class="warn">No status received from nginx yet.</span> Check that the nginx container runs <code>watch-maps.sh</code> and shares the <code>nginx_admin</code> volume.';
+      } else {
+        const cls = st.ok ? "ok" : "bad";
+        html = `<span class="${cls}">${st.ok ? "● OK" : "● ERROR"}</span> – ${esc(st.action || "")} at ${esc(fmtTime(st.time))} UTC` +
+               (st.message ? `<pre>${esc(st.message)}</pre>` : "");
+      }
+      if (n.reload_pending) html += '<div class="warn" style="margin-top:6px">Waiting for nginx to handle the reload request…</div>';
+      $("nginx-status").innerHTML = html;
+      $("nginx-problems-panel").classList.toggle("hidden", !n.problems.length);
+      $("nginx-problems").innerHTML = n.problems.map((p) => `<li>${esc(p)}</li>`).join("");
+      $("nginx-files").textContent = `(generated from database: ${n.generated_file} · static file: ${n.git_file})`;
+      const names = Object.fromEntries((backends || []).map((b) => [b.prefix_key, b.name]));
+      $("nginx-body").innerHTML = n.entries.map((e) => `
+        <tr><td class="mono">${esc(e.prefix_key)}${names[e.prefix_key] ? ` <span class="muted">${esc(names[e.prefix_key])}</span>` : ""}</td>
+        <td class="mono">${esc(e.target)}</td>
+        <td><span class="chip">${e.source === "git" ? "static backends.map" : "database (admin)"}</span></td></tr>`).join("")
+        || '<tr><td colspan="3" class="muted">No backend is routed yet.</td></tr>';
+    } catch (err) { toast(err.message, true); }
+  }
+  $("reload-nginx-view").addEventListener("click", loadNginx);
+  $("force-reload").addEventListener("click", async () => {
+    try {
+      await api("POST", "/api/v1/admin/nginx/reload");
+      toast("Reload requested; nginx will handle it in a few seconds");
+      setTimeout(loadNginx, 500);
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // ---- sync
+  async function loadSync() {
+    try {
+      const [st, c] = await Promise.all([api("GET", "/api/v1/admin/sync"), api("GET", "/api/v1/admin/conflicts")]);
+      const lead = !st.sync_enabled ? '<span class="warn">Sync is off (SYNC_ENABLED=false).</span>'
+        : st.leader ? '<span class="ok">● This replica is the sync leader.</span>'
+        : '<span class="muted">○ Another replica is the sync leader (this one serves the API only).</span>';
+      $("sync-state").innerHTML = lead + (st.leader_election ? "" : ' <span class="muted">(leader election disabled)</span>');
+      $("sync-body").innerHTML = st.streams.map((x) => `
+        <tr><td class="mono">${esc(x.prefix_key)}</td><td>${esc(x.entity)}</td><td class="mono">${esc(x.epoch)}</td>
+        <td class="num">${x.version}</td><td class="muted">${esc(fmtTime(x.updated_at))}</td></tr>`).join("")
+        || '<tr><td colspan="5" class="muted">No stream synced yet.</td></tr>';
+      $("conflict-policy").textContent = `(policy: ${c.policy})`;
+      const group = (title, g) => g.total === 0 ? `<div class="ok">${title}: none</div>` :
+        `<div class="bad">${title}: ${g.total}</div><ul style="margin:4px 0 10px;padding-left:18px">` +
+        g.items.map((i) => `<li><span class="mono">${esc(i.key)}</span> → ${i.backends.map((b) => `<span class="chip">${esc(b)}</span>`).join(" ")}</li>`).join("") +
+        (g.total > g.items.length ? `<li class="muted">… ${g.total - g.items.length} more</li>` : "") + "</ul>";
+      $("conflicts").innerHTML = group("Users", c.users) + group("Agents", c.agents);
+    } catch (err) { toast(err.message, true); }
+  }
+  $("reload-sync").addEventListener("click", loadSync);
+
+  // ---- schedules
+  const fmtDur = (ms) => ms == null ? "" : ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(1) + " s";
+  const fmtTime = (t) => t ? t.replace("T", " ").replace("Z", "") : "—";
+  function runSummary(run) {
+    if (!run) return '<span class="muted">Never run yet.</span>';
+    const st = run.status === "succeeded" ? "ok" : run.status === "failed" ? "bad" : "warn";
+    let counts = "";
+    if (run.result) counts = " – " + resultText(run.result);
+    return `<span class="${st}">${esc(run.status)}</span> at ${esc(fmtTime(run.started_at))} (${esc(run.trigger)})` +
+           ` ${fmtDur(run.duration_ms)}${counts}` + (run.error ? `<div class="bad mono">${esc(run.error)}</div>` : "");
+  }
+  function resultText(r) {
+    if (r.total != null) {
+      const st = r.statuses ? Object.entries(r.statuses).filter(([k]) => k !== "failed").map(([k, v]) => `${v} ${esc(k)}`).join(", ") : "";
+      return `${r.total} backend${r.total === 1 ? "" : "s"}` + (st ? `: ${st}` : "") +
+             `, <span class="${r.failed ? "bad" : ""}">${r.failed || 0} failed</span>` +
+             (r.conflicts ? `, <span class="bad">${r.conflicts} conflicting keys</span>` : "");
+    }
+    if (r.entries != null) {
+      return `${r.entries} map entries, ${r.changed ? "changed" : "unchanged"}` +
+             (r.skipped && r.skipped.length ? `, <span class="warn">${r.skipped.length} skipped</span>` : "");
+    }
+    return "";
+  }
+  let editingSchedule = false;
+  async function loadSchedules() {
+    if (editingSchedule) return; // do not overwrite inputs while the user is typing
+    try {
+      const r = await api("GET", "/api/v1/admin/schedules");
+      $("sched-off").classList.toggle("hidden", r.scheduler_enabled);
+      $("sched-list").innerHTML = r.schedules.map((s) => `
+        <div class="panel" data-name="${esc(s.name)}">
+          <h2>${esc(TASK_LABEL[s.name] || s.name)} ${s.running ? '<span class="chip warn">running…</span>' : ""}</h2>
+          <div class="row">
+            <label class="inline"><input type="checkbox" class="s-enabled" ${s.enabled ? "checked" : ""}> Enabled</label>
+            <label>Interval (seconds) <input type="number" class="s-interval" min="5" value="${s.interval_secs}" style="width:120px"></label>
+            <button class="btn primary s-save">Save</button>
+            <button class="btn s-run" ${s.running ? "disabled" : ""}>Run now</button>
+          </div>
+          <div class="hint">≈ ${humanInterval(s.interval_secs)}. Last scheduled run: ${esc(fmtTime(s.last_run_at))}</div>
+          <div style="margin-top:10px">Latest result: ${runSummary(s.last_run)}</div>
+        </div>`).join("");
+    } catch (err) { toast(err.message, true); }
+  }
+  function humanInterval(s) {
+    const unit = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+    if (s % 86400 === 0) return unit(s / 86400, "day");
+    if (s % 3600 === 0) return unit(s / 3600, "hour");
+    if (s % 60 === 0) return unit(s / 60, "minute");
+    return unit(s, "second");
+  }
+  $("sched-list").addEventListener("focusin", (e) => { if (e.target.matches("input")) editingSchedule = true; });
+  $("sched-list").addEventListener("focusout", () => { editingSchedule = false; });
+  $("sched-list").addEventListener("click", async (e) => {
+    const card = e.target.closest("[data-name]");
+    if (!card) return;
+    const name = card.dataset.name;
+    if (e.target.classList.contains("s-save")) {
+      try {
+        await api("PATCH", "/api/v1/admin/schedules/" + name, {
+          enabled: card.querySelector(".s-enabled").checked,
+          interval_secs: Number(card.querySelector(".s-interval").value),
+        });
+        editingSchedule = false;
+        toast("Schedule saved");
+        loadSchedules();
+      } catch (err) { toast(err.message, true); }
+    }
+    if (e.target.classList.contains("s-run")) {
+      try {
+        const r = await api("POST", `/api/v1/admin/schedules/${name}/run`);
+        toast("Started, run #" + r.run_id);
+        editingSchedule = false;
+        setTimeout(loadSchedules, 500);
+      } catch (err) { toast(err.message, true); }
+    }
+  });
+
+  // ---- runs
+  const openRuns = new Set();
+  async function loadRuns() {
+    const q = new URLSearchParams({ task: $("r-task").value, limit: "100" });
+    try {
+      const r = await api("GET", "/api/v1/admin/task-runs?" + q);
+      $("runs-body").innerHTML = r.runs.map((run) => {
+        const st = run.status === "succeeded" ? "ok" : run.status === "failed" ? "bad" : "warn";
+        const detail = run.result
+          ? `<details data-id="${run.id}" ${openRuns.has(run.id) ? "open" : ""}><summary>${resultText(run.result)}</summary><pre>${esc(JSON.stringify(run.result, null, 2))}</pre></details>`
+          : run.error ? `<span class="bad mono">${esc(run.error)}</span>` : "";
+        return `<tr><td>${run.id}</td><td class="mono">${esc(run.task)}</td><td>${esc(run.trigger)}</td>
+          <td class="${st}">${esc(run.status)}</td><td class="muted">${esc(fmtTime(run.started_at))}</td>
+          <td class="num">${fmtDur(run.duration_ms)}</td><td>${detail}</td></tr>`;
+      }).join("") || '<tr><td colspan="7" class="muted">No runs yet.</td></tr>';
+    } catch (err) { toast(err.message, true); }
+  }
+  $("runs-body").addEventListener("toggle", (e) => {
+    const id = Number(e.target.dataset.id);
+    if (e.target.open) openRuns.add(id); else openRuns.delete(id);
+  }, true);
+  $("reload-runs").addEventListener("click", loadRuns);
+  $("r-task").addEventListener("change", loadRuns);
+
+  // ---- start
+  if (auth) {
+    api("POST", "/api/v1/admin/login").then((r) => showApp(r.username)).catch((err) => { toast(err.message, true); showLogin(); });
+  } else {
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>

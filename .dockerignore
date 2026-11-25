@@ -1,0 +1,9 @@
+target/
+.git/
+.cargo/
+.env
+.deploy-*
+docs/
+deploy/nginx/
+secrets/
+ssl_certificates/

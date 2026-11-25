@@ -1,0 +1,19 @@
+[package]
+name = "api-contracts"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Runtime and OpenAPI response contracts (Rust port of drf-api-contracts)"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+utoipa = "5"
+# Optional: `impl IntoResponse for ContractResponse`
+axum = { version = ">=0.7, <0.9", optional = true, default-features = false }
+
+[features]
+default = []
+axum = ["dep:axum"]
