@@ -58,7 +58,7 @@ Success bodies are `{"data": ...}` (plus `"meta"` where documented); errors are
 | `deploy/certs/` | extra CA certificates (`*.crt`) |
 | `docker-compose.dev.yml` | development stack: Router, nginx, PostgreSQL |
 | `docker-compose.prod.yml` | production stack: Router, nginx (HTTPS); PostgreSQL is external |
-| `docs/DEPLOYMENT.md` | configuration, deployment and operations |
+| `docs/deployment.md` | configuration, deployment and operations |
 
 ## Development
 
