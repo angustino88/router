@@ -28,7 +28,7 @@ A single-department deployment does not need the Router: the frontend runs with 
 ## Quick start
 
 ```bash
-cp .env.example .env            # ADMIN_PASSWORD, AAD_TENANT_ID, AAD_AUDIENCE, ROUTING_SYNC_TOKEN, CORS_ALLOWED_ORIGINS
+cp .env.example .env            # ADMIN_PASSWORD, AAD_TENANT_ID, AAD_AUDIENCE, ROUTING_SYNC_TOKEN
 make dev-up                     # docker compose -f docker-compose.dev.yml up -d --build
 ```
 

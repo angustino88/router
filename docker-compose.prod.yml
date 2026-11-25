@@ -43,7 +43,8 @@ services:
     image: nginx:1.27-alpine
     command: ["sh", "/etc/nginx/labmango/entrypoint.sh"]
     environment:
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?set CORS_ALLOWED_ORIGINS in .env (the frontend origin)}
+      # Only needed when the frontend calls the Router from another origin instead of through its own nginx.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
     ports:
       - "443:443"
       - "80:80"

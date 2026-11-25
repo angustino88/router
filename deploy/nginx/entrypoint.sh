@@ -30,7 +30,7 @@ log() { echo "[nginx-entrypoint] $*" >&2; }
 write_cors_map() {
     out="$GEN_DIR/cors_origins.map"
     : > "$out.tmp"
-    for origin in $(printf '%s' "${CORS_ALLOWED_ORIGINS:-http://localhost:3000}" | tr ',' ' '); do
+    for origin in $(printf '%s' "${CORS_ALLOWED_ORIGINS-http://localhost:3000}" | tr ',' ' '); do
         origin="${origin%/}"
         case "$origin" in
             http://*|https://*) ;;

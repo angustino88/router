@@ -8,7 +8,7 @@ LabMango has a **frontend**, one **backend** per department, and, when there is 
 | Mode | Frontend settings | Requests |
 |---|---|---|
 | `direct` (default) | `VITE_API_URL=https://backend` | frontend → backend; no Router |
-| `router` | `VITE_ROUTER_URL=https://router` | frontend → Router nginx `/t/<prefix_key>/` → backend |
+| `router` | `ROUTER_UPSTREAM=https://router` (frontend nginx) | frontend nginx `/routing/`, `/t/<prefix_key>/` → Router nginx → backend |
 
 ```mermaid
 sequenceDiagram
@@ -34,7 +34,8 @@ sequenceDiagram
 2. The Router validates it (signature, audience = the frontend's client ID, expiry), builds the routing key
    `entra:<tid>:<oid>` and looks it up in the claims synced from the backends.
 3. The frontend keeps the prefix (localStorage `labmango.routedBackend`) and sends every request, including
-   sign-in, token refresh and WebSockets, to `VITE_ROUTER_URL/t/<prefix_key>/...`. nginx removes the prefix and
+   sign-in, token refresh and WebSockets, to `/t/<prefix_key>/...` on its own origin; the frontend's nginx forwards
+   `/routing/` and `/t/` to the Router's nginx (`ROUTER_UPSTREAM`), which removes the prefix and
    proxies to the backend; cookies set by the backend are scoped to `/t/<prefix_key>/`.
 4. The backend authenticates and authorizes every request itself: routing is not authorization.
 
@@ -49,9 +50,9 @@ agent setup dialog uses it by default.
 
 | Part | Setting | Value |
 |---|---|---|
-| Frontend | `VITE_API_MODE` / `VITE_ROUTER_URL` | `router` / public URL of the Router nginx |
+| Frontend | `VITE_API_MODE` / `ROUTER_UPSTREAM` | `router` / URL of the Router nginx (the frontend's nginx proxies to it) |
 | Router | `AAD_TENANT_ID`, `AAD_AUDIENCE` | the frontend's `VITE_TENANT_ID` and `VITE_CLIENT_ID` |
-| Router | `CORS_ALLOWED_ORIGINS` | the frontend origin |
+| Router | `CORS_ALLOWED_ORIGINS` | only when the browser calls the Router from another origin (normally the frontend's nginx proxies it, same origin) |
 | Router | sync credential | section 3.1 |
 | Router admin page | one backend per department | name, URL (`https://backend-a:8443`), backend_id (= its `BACKEND_ID`) |
 | Each backend | `BACKEND_ID` | its logical id, e.g. `dept_a` |
@@ -76,14 +77,15 @@ make dev-logs
 http://localhost:8080/admin/ (admin account from `.env`). For a full local stack, run two backends on the host
 (e.g. ports 8001 and 8002, `BACKEND_ID=dept_a` / `dept_b`, `ALLOWED_HOSTS` containing `host.docker.internal`),
 register them as `http://host.docker.internal:8001` and `:8002`, and start the frontend with
-`VITE_API_MODE=router` and `VITE_ROUTER_URL=http://localhost:8080`.
+`VITE_API_MODE=router` and `DEV_PROXY_TARGET=http://localhost:8080` (`npm run dev`), or its Docker nginx with
+`ROUTER_UPSTREAM=http://host.docker.internal:8080` (the frontend's `docs/deployment.md`).
 
 ### Production
 
 1. Put the TLS certificate in `ssl_certificates/server.pem` and `server.key`, and set the public host name in
    `deploy/nginx/prod.conf` (`router.example.com`).
 2. Create `.env` from `.env.example`: a strong `ADMIN_PASSWORD`, `DATABASE_URL`, `AAD_TENANT_ID`,
-   `AAD_AUDIENCE`, `CORS_ALLOWED_ORIGINS`, the sync credential.
+   `AAD_AUDIENCE`, the sync credential.
 3. `make prod-up` (`docker compose -f docker-compose.prod.yml up -d --build`).
 4. On `/admin/`, add every backend with its URL and backend_id. The "Sync" tab shows their streams within
    seconds, the "Nginx" tab **● OK**.
@@ -107,7 +109,7 @@ After a change: `docker compose -f docker-compose.<dev|prod>.yml up -d` (the con
 | `AAD_AUDIENCE` | yes | the frontend's client ID |
 | `AAD_JWKS_URL` | no | signing keys URL, instead of deriving it |
 | `HTTPS_PROXY` | no | outbound proxy for Microsoft endpoints only |
-| `CORS_ALLOWED_ORIGINS` | prod | frontend origin(s), comma separated |
+| `CORS_ALLOWED_ORIGINS` | no | origins allowed to call the Router cross-origin (empty: same-origin use through the frontend's nginx) |
 | `ROUTING_SYNC_AUTH` | no | `static` (default) or `entra` |
 | `ROUTING_SYNC_TOKEN` / `_FILE` | static | one token for every backend |
 | `ROUTING_SYNC_TOKENS_DIR` | static | one token per backend: files `<dir>/<prefix_key>` or `<dir>/<backend_id>` |
@@ -254,7 +256,7 @@ Metrics: `router_routing_requests_total{entity,outcome}`, `router_sync_pages_app
 | `400 invalid_token` on every sign-in | Microsoft unreachable (proxy/CA), wrong `AAD_AUDIENCE`, or expired token | log line `ID token rejected`; set `HTTPS_PROXY` / CA certificates |
 | `404 not_routed` | the user is not published by any backend (no Entra binding, or not synced yet) | "Sync" tab; bind the user on the backend |
 | `409 ambiguous_route` | the user is claimed by two backends | "Sync" tab → Conflicts; fix the assignment on a backend |
-| CORS error in the browser | frontend origin not in `CORS_ALLOWED_ORIGINS` | set it; nginx logs the origins at start |
+| CORS error in the browser | the frontend calls the Router from another origin | proxy through the frontend's nginx (`ROUTER_UPSTREAM`), or list the origin in `CORS_ALLOWED_ORIGINS` |
 | Sync `HTTP 401` / `403` | wrong token or Entra role | check the token file / hash or the role assignment |
 | Sync `reports backend_id "x", the registry expects "y"` | URL points at another backend, or wrong backend_id | fix it on the admin page |
 | Sync `HTTP 404` without error code | backend not routed by nginx | "Nginx" tab: set its URL |
