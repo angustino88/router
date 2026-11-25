@@ -14,8 +14,8 @@ use anyhow::{bail, Context, Result};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde_json::Value;
 
-/// Message returned to clients for every validation failure (kept stable for existing clients).
-pub const INVALID_TOKEN: &str = "Microsoft Token is invalid or expired";
+/// Message returned to clients for every validation failure; the cause is logged.
+pub const INVALID_TOKEN: &str = "The Microsoft ID token is invalid or expired.";
 
 const MIN_FORCED_REFRESH: Duration = Duration::from_secs(30);
 
@@ -139,9 +139,10 @@ pub fn parse_jwks(body: &Value) -> Result<HashMap<String, DecodingKey>> {
 pub fn extract_user_key(payload: &serde_json::Map<String, Value>) -> Result<String, &'static str> {
     let claim = |name: &str| match payload.get(name) {
         Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.trim()),
-        _ => Err("tid and oid were not found in id_token payload."),
+        _ => Err("The ID token has no tid or oid claim."),
     };
-    let parse = |raw: &str| uuid::Uuid::parse_str(raw).map_err(|_| "tid and oid must be UUIDs.");
+    let parse =
+        |raw: &str| uuid::Uuid::parse_str(raw).map_err(|_| "The tid and oid claims of the ID token must be UUIDs.");
     let tid = parse(claim("tid")?)?;
     let oid = parse(claim("oid")?)?;
     Ok(format!("entra:{}:{}", tid.hyphenated(), oid.hyphenated()))
@@ -168,11 +169,11 @@ mod tests {
         );
         assert_eq!(
             extract_user_key(&payload(json!({"tid": "0ae51e19-07c8-4e4b-bb6d-648ee58410f4"}))).unwrap_err(),
-            "tid and oid were not found in id_token payload."
+            "The ID token has no tid or oid claim."
         );
         assert_eq!(
             extract_user_key(&payload(json!({"tid": "x", "oid": "7709c6de-b8bf-4ffa-af27-f641536c746d"}))).unwrap_err(),
-            "tid and oid must be UUIDs."
+            "The tid and oid claims of the ID token must be UUIDs."
         );
         assert!(extract_user_key(&payload(json!({"tid": 1, "oid": 2}))).is_err());
     }

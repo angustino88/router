@@ -1,16 +1,9 @@
-//! PostgreSQL access.
-//!
-//! * Registry and claims: `tenant_backend`, `tenant_usertenantresolver`, `tenant_agenttenantresolver`. Their layout
-//!   is unchanged from the original Django service, so an existing database is reused as is.
-//! * Router tables: `rust_periodic_task` (schedules), `rust_task_run` (run history), `rust_sync_cursor` (stream cursors).
-//!
-//! Submodules by feature: [`routing`] (lookups for the public API), [`backends`] (backend CRUD),
-//! [`mappings`] (sync snapshots and mapping views), [`jobs`] (schedules and run history).
+//! PostgreSQL access, one submodule per area: [`backends`] (registry), [`claims`] (synced user/agent claims,
+//! stream cursors, routing lookups) and [`jobs`] (schedules and run history). The schema is `schema.sql`.
 
 pub mod backends;
+pub mod claims;
 pub mod jobs;
-pub mod mappings;
-pub mod routing;
 
 use std::{str::FromStr, time::Duration};
 
@@ -57,23 +50,25 @@ pub async fn migrate(pool: &PgPool) -> Result<()> {
 }
 
 /// Which resolver table a routing stream is applied to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The two claim streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
-    /// `tenant_usertenantresolver (user_id = routing key; display_name unused)`
     Users,
-    /// `tenant_agenttenantresolver (agent_id = agent UUID, sku unused)`
     Agents,
 }
 
 impl Kind {
-    pub(crate) fn sql(self) -> (&'static str, &'static str, &'static str) {
+    pub const ALL: [Kind; 2] = [Kind::Users, Kind::Agents];
+
+    /// Claim table of the stream.
+    pub(crate) fn table(self) -> &'static str {
         match self {
-            Kind::Users => ("tenant_usertenantresolver", "user_id", "display_name"),
-            Kind::Agents => ("tenant_agenttenantresolver", "agent_id", "sku"),
+            Kind::Users => "user_claim",
+            Kind::Agents => "agent_claim",
         }
     }
 
-    /// Stream name in the core routing sync API (`/internal/{snapshot,changes}/{entity}`).
+    /// Stream name in the backends' sync API (`/internal/{snapshot,changes,digest}/{entity}`).
     pub fn entity(self) -> &'static str {
         match self {
             Kind::Users => "users",
@@ -87,17 +82,15 @@ pub(crate) fn ts(col: &str) -> String {
     format!("to_char({col} AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')")
 }
 
-/// Scratch database for tests: only when TEST_DATABASE_URL is set (all tenant data in it is deleted).
+/// Scratch database for tests: only when TEST_DATABASE_URL is set (all Router data in it is deleted).
 #[cfg(test)]
 pub(crate) async fn test_pool() -> Option<PgPool> {
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
     let pool = PgPool::connect(&url).await.expect("connect TEST_DATABASE_URL");
     migrate(&pool).await.unwrap();
-    sqlx::raw_sql(
-        "TRUNCATE rust_sync_cursor, tenant_usertenantresolver, tenant_agenttenantresolver, tenant_backend, rust_task_run RESTART IDENTITY CASCADE",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::raw_sql("TRUNCATE backend, user_claim, agent_claim, sync_cursor, job_run RESTART IDENTITY CASCADE")
+        .execute(&pool)
+        .await
+        .unwrap();
     Some(pool)
 }

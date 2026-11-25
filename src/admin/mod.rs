@@ -1,7 +1,7 @@
 //! Admin page `/admin/` and admin API `/admin/api/*`.
 //!
 //! One account from the environment (ADMIN_USERNAME / ADMIN_PASSWORD), sent on every request as HTTP Basic
-//! auth or as `username` / `password` in the JSON body.
+//! credentials. Responses use the API envelope (`{"data": ...}` / `{"error": ...}`).
 
 pub mod auth;
 mod backends;
@@ -22,7 +22,9 @@ use axum::{
 use crate::state::AppState;
 
 pub use auth::AdminAccount;
-pub use fields::{backend_id as validate_backend_id, upstream_url as validate_upstream_url};
+pub use fields::{
+    backend_id as validate_backend_id, backend_name as validate_name, upstream_url as validate_upstream_url,
+};
 
 const PAGE: &str = include_str!("page.html");
 
@@ -47,7 +49,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin", get(|| async { Redirect::permanent("/admin/") }))
         .route("/admin/", get(page))
-        .route(&format!("{API}/login"), post(auth::login))
+        .route(&format!("{API}/session"), get(auth::session))
         .route(&format!("{API}/backends"), get(backends::list).post(backends::create))
         .route(&format!("{API}/backends/:id"), get(backends::get_one).patch(backends::update).delete(backends::delete))
         .route(&format!("{API}/backends/:id/users"), get(backends::users))
@@ -58,6 +60,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(&format!("{API}/jobs/:name"), get(jobs::get_one).patch(jobs::update))
         .route(&format!("{API}/jobs/:name/run"), post(jobs::run))
         .route(&format!("{API}/runs"), get(jobs::runs))
+        .route(&format!("{API}/runs/:id"), get(jobs::run_one))
         .route(&format!("{API}/sync"), get(sync::status))
         .route(&format!("{API}/sync/conflicts"), get(sync::conflicts))
 }

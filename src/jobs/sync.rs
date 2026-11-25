@@ -1,4 +1,4 @@
-//! Routing sync with the core backends (the private `/internal/*` API of each department backend).
+//! Routing sync with the department backends (their private `/internal/*` API).
 //!
 //! Two streams per backend, `users` and `agents`. Each claim is only a key:
 //!
@@ -7,7 +7,7 @@
 //!
 //! Only the keys are stored.
 //!
-//! Protocol (see the core's routing-sync spec):
+//! Protocol (backend routing-sync spec):
 //!
 //! 1. [`Syncer::resync`]: download `/internal/snapshot/{entity}` page by page, replay
 //!    `/internal/changes/{entity}` from the first page's watermark, then publish the whole list and its
@@ -15,7 +15,7 @@
 //! 2. [`Syncer::poll_once`]: long-poll `/internal/changes/{entity}?since=&epoch=&wait=30` and apply each
 //!    page together with the new cursor. `mode: "reset"` means a full resync.
 //!
-//! The long-poll loops run in [`super::stream`]. The scheduled jobs (`sync_all_backend_*`) are a safety net:
+//! The long-poll loops run in [`super::stream`]. The scheduled jobs (`check_*_stream`) are a safety net:
 //! [`Syncer::sync_all`] checks each stream against `/internal/info` and `/internal/digest` and resyncs on drift.
 //!
 //! Requests go through the internal Nginx entrypoint: `GET {NGINX_INTERNAL_BASE_URL}/t/{prefix_key}/internal/...`
@@ -47,8 +47,7 @@ use super::credentials::SyncCredentials;
 use crate::{
     db::{
         backends::{self as backend_db, Backend},
-        mappings::{self, conflicts, ApplyCounts, Cursor},
-        routing::canonical_uuid,
+        claims::{self, canonical_uuid, conflicts, ApplyCounts, Cursor},
         Kind,
     },
     outbound,
@@ -76,7 +75,7 @@ pub enum ErrorKind {
     WrongBackend,
 }
 
-/// Error reported as `"error"` in the task result and in the logs.
+/// Error reported as `"error"` in the job result and in the logs.
 #[derive(Debug)]
 pub struct SyncError {
     pub name: &'static str,
@@ -92,7 +91,7 @@ impl std::fmt::Display for SyncError {
 
 impl From<sqlx::Error> for SyncError {
     fn from(e: sqlx::Error) -> Self {
-        SyncError { name: "DatabaseError", message: e.to_string(), kind: ErrorKind::Other }
+        SyncError { name: "database", message: e.to_string(), kind: ErrorKind::Other }
     }
 }
 
@@ -107,8 +106,8 @@ impl Task {
 
     fn error_name(self) -> &'static str {
         match self {
-            Task::Users => "BackendUserSyncError",
-            Task::Agents => "BackendAgentSyncError",
+            Task::Users => "users sync",
+            Task::Agents => "agents sync",
         }
     }
 
@@ -120,19 +119,11 @@ impl Task {
         SyncError { name: self.error_name(), message: message.into(), kind }
     }
 
-    /// Name used for schedules and run history (unchanged, so existing schedule rows keep working).
+    /// Name of the safety-net check job of this stream.
     pub fn name(self) -> &'static str {
         match self {
-            Task::Users => "sync_all_backend_users",
-            Task::Agents => "sync_all_backend_agents",
-        }
-    }
-
-    /// Task name of the legacy Celery schedule, read once to seed the interval.
-    pub fn celery_name(self) -> &'static str {
-        match self {
-            Task::Users => "tenant.tasks.sync_all_backend_users",
-            Task::Agents => "tenant.tasks.sync_all_backend_agents",
+            Task::Users => "check_users_stream",
+            Task::Agents => "check_agents_stream",
         }
     }
 
@@ -502,11 +493,6 @@ impl Syncer {
         Ok(page)
     }
 
-    /// Rows to store: the key only (the extra column stays empty).
-    fn records(keys: Vec<String>) -> Vec<(String, String)> {
-        keys.into_iter().map(|k| (k, String::new())).collect()
-    }
-
     /// Full snapshot + replay, then atomic publish of the list and its cursor.
     pub async fn resync(&self, backend: &Backend, task: Task) -> Result<Value, SyncError> {
         let kind = task.kind();
@@ -568,13 +554,12 @@ impl Syncer {
 
         let mut keys: Vec<String> = staged.into_iter().collect();
         keys.sort();
-        let records = Self::records(keys);
         let cursor = Cursor { epoch: epoch.clone(), version: version as i64 };
         crate::metrics::inc("router_sync_resyncs_total", &[("entity", entity)]);
-        let status = match mappings::replace_all(&self.pool, backend.id, kind, &records, &cursor).await? {
+        let status = match claims::replace_all(&self.pool, backend.id, kind, &keys, &cursor).await? {
             Some(c) => json!({
                 "status": "resynced", "backend": backend.prefix_key, "epoch": epoch, "version": version,
-                "received": c.received, "created": c.created, "updated": c.updated, "deactivated": c.deactivated,
+                "received": c.received, "added": c.added, "removed": c.removed,
             }),
             // A concurrent long-poll already stored a newer position of the same history.
             None => json!({"status": "ok", "backend": backend.prefix_key, "note": "newer cursor already stored"}),
@@ -604,9 +589,8 @@ impl Syncer {
                 Op::Delete => deletes.push(key),
             }
         }
-        let upserts = Self::records(upserts);
         let to = Cursor { epoch: cursor.epoch.clone(), version: version as i64 };
-        match mappings::apply_delta(&self.pool, backend.id, kind, cursor, &upserts, &deletes, &to).await? {
+        match claims::apply_delta(&self.pool, backend.id, kind, cursor, &upserts, &deletes, &to).await? {
             Some(counts) => Ok(PollOutcome::Applied { counts, to, has_more }),
             None => Ok(PollOutcome::Stale),
         }
@@ -624,7 +608,7 @@ impl Syncer {
             }
             Err(e) => return Err(e),
         };
-        let Some(cursor) = mappings::get_cursor(&self.pool, backend.id, kind).await? else {
+        let Some(cursor) = claims::get_cursor(&self.pool, backend.id, kind).await? else {
             return self.resync(backend, task).await;
         };
         let head = info.version;
@@ -649,7 +633,7 @@ impl Syncer {
         let same_point = string(&digest, "epoch") == Some(cursor.epoch.as_str())
             && uint(&digest, "version") == Some(cursor.version as u64);
         if same_point {
-            let keys = mappings::active_keys(&self.pool, backend.id, kind).await?;
+            let keys = claims::keys(&self.pool, backend.id, kind).await?;
             let remote_count = uint(&digest, "count").unwrap_or(0) as usize;
             let remote_sum = string(&digest, "checksum");
             let local_sum = checksum(&keys);

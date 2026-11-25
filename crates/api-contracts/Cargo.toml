@@ -3,7 +3,8 @@ name = "api-contracts"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "Runtime and OpenAPI response contracts (Rust port of drf-api-contracts)"
+description = "Runtime and OpenAPI response contracts"
+publish = false
 license = "MIT"
 readme = "README.md"
 

@@ -9,7 +9,6 @@ use crate::{
     jobs::{leader::Leadership, Runner},
     nginx::NginxMaps,
     routing::aad::Aad,
-    settings::ConflictPolicy,
 };
 
 pub struct AppState {
@@ -19,9 +18,8 @@ pub struct AppState {
     pub admin: Option<AdminAccount>,
     pub runner: Arc<Runner>,
     pub maps: Arc<NginxMaps>,
-    /// SYNC_ENABLED: the scheduler and the long-poll sync run (on the leader replica).
-    pub scheduler_enabled: bool,
-    pub conflict_policy: ConflictPolicy,
+    /// `SYNC_ENABLED`: the scheduler and the stream sync run (on the leader replica).
+    pub sync_enabled: bool,
     /// Whether this replica currently holds the sync leadership.
     pub leadership: Arc<Leadership>,
 }

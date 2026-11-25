@@ -11,8 +11,7 @@ description = "LabMango Router: routes users and agents to their department back
 publish = false
 
 [[bin]]
-# Binary name kept for existing deployments, scripts and docs.
-name = "tenant-resolver"
+name = "labmango-router"
 path = "src/main.rs"
 
 [dependencies]
@@ -30,7 +29,7 @@ subtle = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7"
-tower-http = { version = "0.6", features = ["trace", "timeout", "request-id", "set-header", "util"] }
+tower-http = { version = "0.6", features = ["trace", "timeout", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = "5"

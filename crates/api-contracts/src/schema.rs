@@ -47,7 +47,7 @@ impl SchemaRef {
     }
 }
 
-/// Counterpart of "a serializer (class or instance)" in the Python package:
+/// A schema for the OpenAPI document:
 /// a reference to a schema plus every component that reference needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SchemaDef {
@@ -61,7 +61,7 @@ impl SchemaDef {
         Self { root: SchemaRef::None, components: Components::new() }
     }
 
-    /// Schema of a Rust type deriving `utoipa::ToSchema` (like passing a serializer class).
+    /// Schema of a Rust type deriving `utoipa::ToSchema`.
     pub fn of<T: ToSchema>() -> Self {
         let name = T::name().into_owned();
         let mut list: Vec<(String, utoipa::openapi::RefOr<utoipa::openapi::Schema>)> =
@@ -90,7 +90,7 @@ impl SchemaDef {
 
     /// Default problem schema (`ProblemDetailSerializer`).
     ///
-    /// NOTE: kept exactly like the Python package. At runtime `respond_problem`
+    /// NOTE: the inner error object; at runtime `respond_problem`
     /// wraps this object in `{"error": {...}}`, but the documented schema is the
     /// flat object. See README "Known quirks".
     pub fn problem_detail() -> Self {
@@ -197,11 +197,10 @@ impl ResponseSchemaFactory {
     }
 
     /// `oneOf` over several schemas, registered as component `component_name`
-    /// (drf-spectacular `PolymorphicProxySerializer`).
     pub fn variants(component_name: &str, schemas: Vec<SchemaDef>) -> Result<SchemaDef> {
         Self::validate_name(component_name)?;
         if schemas.is_empty() {
-            return Err(ContractError::value("schemas must contain at least one serializer"));
+            return Err(ContractError::value("schemas must contain at least one schema"));
         }
         let one_of: Vec<Value> = schemas.iter().filter_map(SchemaDef::json).collect();
         let mut def = SchemaDef::component(component_name, json!({ "oneOf": one_of }));
@@ -223,7 +222,7 @@ impl ResponseSchemaFactory {
         Self::variants(component_name, schemas)
     }
 
-    /// Responses map for one schema (Python returned an `extend_schema` decorator).
+    /// Responses map for one schema.
     pub fn document(schema: SchemaDef, status_code: u16) -> Vec<(u16, SchemaDef)> {
         vec![(status_code, schema)]
     }
@@ -253,7 +252,7 @@ impl ResponseSchemaFactory {
     }
 }
 
-/// Python `str.title()`.
+/// Title case: first letter of every word upper case, the rest lower case.
 pub(crate) fn py_title(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut prev_alpha = false;

@@ -1,20 +1,20 @@
-//! LabMango Router (tenant resolver): routes users and agents to their department backend.
+//! LabMango Router: routes users and agents to their department backend.
 //!
 //! Source layout (one folder per feature):
 //!
 //! | Module | Feature |
 //! |---|---|
-//! | [`routing`] | public API `by-id-token` / `by-agent-id` (+ Azure AD token check) |
+//! | [`routing`] | public API `POST /routing/resolve/{user,agent}` (+ Microsoft ID-token check) |
 //! | [`admin`]   | admin page `/admin/` and admin API `/admin/api/*` |
 //! | [`jobs`]    | background jobs: routing sync with the backends, nginx map, scheduler, leader election |
-//! | [`nginx`]   | nginx backend map files |
+//! | [`nginx`]   | nginx backend map |
 //! | [`metrics`] | Prometheus metrics (`GET /metrics`) |
 //! | [`openapi`] | OpenAPI document built from `api-contracts` (`openapi` command, `GET /openapi.json`) |
 //! | [`db`]      | PostgreSQL schema and queries |
-//! | [`http`]    | server assembly, request parsing and error bodies |
+//! | [`http`]    | server assembly, middleware, response envelope, request parsing |
 //! | [`app`], [`cli`], [`settings`], [`state`], [`outbound`] | start-up, commands, configuration, shared state, Microsoft HTTP client |
 
-#![allow(clippy::result_large_err)] // handlers return a ready `Response` as the error, as axum does
+#![allow(clippy::result_large_err)] // API errors carry their status, code, message and details
 
 mod admin;
 mod app;
@@ -38,7 +38,11 @@ use clap::{Parser, Subcommand};
 use crate::{jobs::sync::Task, settings::Settings};
 
 #[derive(Parser)]
-#[command(name = "tenant-resolver", version, about = "LabMango Router (tenant resolver) service")]
+#[command(
+    name = "labmango-router",
+    version,
+    about = "LabMango Router: routes users and agents to their department backend"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -50,22 +54,29 @@ enum Cmd {
     Serve,
     /// Create or upgrade the tables (also done by `serve` unless AUTO_MIGRATE=false).
     Migrate,
-    /// Full resync of the `users` stream from every active backend, printed as JSON.
-    SyncUsers,
-    /// Full resync of the `agents` stream from every active backend, printed as JSON.
-    SyncAgents,
+    /// Full resync (snapshot + replay) of one stream from every active backend, printed as JSON.
+    Resync {
+        #[arg(value_enum)]
+        stream: Stream,
+    },
     /// Manage backends from the command line.
     Backend {
         #[command(subcommand)]
         cmd: cli::BackendCmd,
     },
-    /// Print the OpenAPI 3.1 document (JSON) to stdout; needs no database. Import it into Apidog.
+    /// Print the OpenAPI 3.1 document (JSON) to stdout; needs no database.
     Openapi,
     /// Container health probe: exit 0 when the URL answers 2xx.
     Healthcheck {
         #[arg(long, default_value = "http://127.0.0.1:8000/healthz")]
         url: String,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Stream {
+    Users,
+    Agents,
 }
 
 fn main() -> Result<()> {
@@ -107,8 +118,8 @@ async fn run(cmd: Cmd, settings: Option<Settings>) -> Result<()> {
             println!("tables are up to date");
             Ok(())
         }
-        Cmd::SyncUsers => cli::sync_once(pool, &s, Task::Users).await,
-        Cmd::SyncAgents => cli::sync_once(pool, &s, Task::Agents).await,
+        Cmd::Resync { stream: Stream::Users } => cli::sync_once(pool, &s, Task::Users).await,
+        Cmd::Resync { stream: Stream::Agents } => cli::sync_once(pool, &s, Task::Agents).await,
         Cmd::Backend { cmd } => cli::backend(&pool, cmd).await,
         Cmd::Healthcheck { .. } | Cmd::Openapi => unreachable!(),
     }

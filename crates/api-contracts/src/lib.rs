@@ -1,6 +1,6 @@
 //! Runtime and OpenAPI response contracts.
 //!
-//! Rust port of the Python package `drf-api-contracts`: one contract describes
+//! Response contracts: one contract describes
 //! both the JSON a handler returns and the OpenAPI documentation of it, so the
 //! two can never drift apart. The generated document can be imported in Apidog.
 //!
@@ -35,9 +35,6 @@ pub use openapi::{OpenApiDocument, OperationDoc};
 pub use operation::{OperationBuilder, OperationContract, ResponseSet};
 pub use response::{error_details, ContractResponse, ErrorTree, PageParams, ProblemArgs, ResponseContract};
 pub use schema::{merge_components, Components, ResponseSchemaFactory, SchemaDef, SchemaRef};
-pub use settings::{
-    default_code_value, default_problem_detail, CodeResolver, ContractSettings, ProblemResolver, DEFAULT_PROBLEM_TYPE,
-    PROBLEM_JSON,
-};
+pub use settings::{default_code_value, default_problem_detail, CodeResolver, ContractSettings, ProblemResolver};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

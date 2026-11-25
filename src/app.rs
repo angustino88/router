@@ -28,9 +28,9 @@ pub async fn serve(s: Settings, pool: PgPool) -> Result<()> {
     }
     jobs::init(&pool, &s).await?;
 
-    let maps = Arc::new(NginxMaps::new(&s.nginx_map_file, &s.nginx_admin_dir));
-    // Write the generated map once at start-up so nginx has a current file even before the first schedule.
-    match jobs::render_nginx_map(&pool, &maps).await {
+    let maps = Arc::new(NginxMaps::new(&s.nginx_map_dir));
+    // Write the map at start-up so nginx has a current file before the first scheduled run.
+    match jobs::write_nginx_map_recorded(&pool, &maps, "startup").await {
         Ok(v) => tracing::info!(result = %v, "nginx map generated"),
         Err(e) => tracing::warn!("nginx map not generated at start-up: {e}"),
     }
@@ -52,8 +52,7 @@ pub async fn serve(s: Settings, pool: PgPool) -> Result<()> {
         admin,
         runner: runner.clone(),
         maps,
-        scheduler_enabled: s.sync_enabled,
-        conflict_policy: s.conflict_policy,
+        sync_enabled: s.sync_enabled,
         leadership: leadership.clone(),
     });
 

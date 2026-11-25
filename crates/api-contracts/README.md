@@ -1,6 +1,6 @@
 # api-contracts
 
-Rust port of the Python package `drf-api-contracts`.
+Response contracts for the LabMango Router.
 
 One contract describes **both** the JSON your handler returns and the OpenAPI
 documentation of that JSON, so they cannot drift apart. The generated OpenAPI 3.1
@@ -41,7 +41,7 @@ fn main() -> api_contracts::Result<()> {
 | `OperationContract` | responses + optional request/query types + tags; `schema()` gives the OpenAPI operation |
 | `ResponseSchemaFactory` | builds envelope schemas: `{data}`, `{data: []}`, `{data, meta.pagination}`, `oneOf` |
 | `ContractSettings` | envelope keys, code resolver, problem message resolver |
-| `OpenApiDocument` | collects operations into a full OpenAPI 3.1 JSON (new; Python relied on drf-spectacular) |
+| `OpenApiDocument` | collects operations into a full OpenAPI 3.1 JSON |
 
 Request/query types must derive `serde::Deserialize` + `utoipa::ToSchema`;
 payload types also derive `serde::Serialize`.
@@ -54,11 +54,10 @@ api-contracts = { version = "0.1", features = ["axum"] }
 
 `ContractResponse` then implements `IntoResponse`.
 
-## Known quirks inherited from the Python package
+## Notes
 
-* The default problem schema (`ProblemDetail`) is documented as a flat object, but
-  `respond_problem` returns `{"error": {...}}`. Kept as-is for parity.
-* `ContractSettings::problem_content_type` and `problem_type` are declared but not used.
+* The default problem schema (`ProblemDetail`) is the inner error object; `respond_problem` returns it
+  wrapped as `{"error": {...}}`. Services that document the full envelope declare their own schema.
 
 ## Development
 

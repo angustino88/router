@@ -170,7 +170,6 @@ mod tests {
             prefix_key: key.into(),
             name: "B".into(),
             is_active: true,
-            computer_sync_version: 0,
             upstream_url: String::new(),
             backend_id: id.into(),
         }

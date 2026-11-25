@@ -1,88 +1,13 @@
 {
   "components": {
     "schemas": {
-      "AgentIdRequest": {
-        "properties": {
-          "agent_id": {
-            "description": "Agent UUID (`agent_uid` on the core backend).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "agent_id"
-        ],
-        "type": "object"
-      },
-      "AgentMapping": {
-        "properties": {
-          "agent_id": {
-            "type": "string"
-          },
-          "created": {
-            "type": "string"
-          },
-          "id": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "is_active": {
-            "type": "boolean"
-          },
-          "modified": {
-            "type": "string"
-          },
-          "sku": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "agent_id",
-          "sku",
-          "is_active",
-          "created",
-          "modified"
-        ],
-        "type": "object"
-      },
-      "AgentMappingList": {
-        "properties": {
-          "count": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/AgentMapping"
-            },
-            "type": "array"
-          },
-          "total": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "total",
-          "count",
-          "items"
-        ],
-        "type": "object"
-      },
       "BackendCreateRequest": {
+        "additionalProperties": false,
         "properties": {
           "backend_id": {
-            "description": "The backend's `BACKEND_ID`; checked against `GET /internal/info` and used for the Entra token audience.",
+            "description": "The backend's `BACKEND_ID`; empty = not checked.",
             "type": [
               "string",
-              "null"
-            ]
-          },
-          "computer_sync_version": {
-            "description": "Default `0`.",
-            "format": "int32",
-            "type": [
-              "integer",
               "null"
             ]
           },
@@ -97,20 +22,8 @@
             "description": "Display name, 1 to 255 characters.",
             "type": "string"
           },
-          "password": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "upstream_url": {
-            "description": "`scheme://host[:port]` without path; empty = not routed by nginx.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "username": {
+            "description": "`scheme://host[:port]` without a path; empty = not routed.",
             "type": [
               "string",
               "null"
@@ -122,9 +35,20 @@
         ],
         "type": "object"
       },
+      "BackendDetail": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BackendView"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "BackendList": {
         "properties": {
-          "backends": {
+          "data": {
             "items": {
               "$ref": "#/components/schemas/BackendView"
             },
@@ -132,23 +56,31 @@
           }
         },
         "required": [
-          "backends"
+          "data"
+        ],
+        "type": "object"
+      },
+      "BackendMutationResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BackendView"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/MutationMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
         ],
         "type": "object"
       },
       "BackendUpdateRequest": {
+        "additionalProperties": false,
         "properties": {
           "backend_id": {
-            "description": "`\"\"` removes the expected backend id (no identity check).",
             "type": [
               "string",
-              "null"
-            ]
-          },
-          "computer_sync_version": {
-            "format": "int32",
-            "type": [
-              "integer",
               "null"
             ]
           },
@@ -164,20 +96,8 @@
               "null"
             ]
           },
-          "password": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "upstream_url": {
-            "description": "`\"\"` removes the URL.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "username": {
+            "description": "`\"\"` stops routing the backend.",
             "type": [
               "string",
               "null"
@@ -187,15 +107,15 @@
         "type": "object"
       },
       "BackendView": {
-        "description": "A backend as shown by the admin API.",
+        "description": "A backend as returned by the admin API.",
         "properties": {
-          "agents_active": {
-            "description": "Active agent claims stored for this backend.",
+          "agent_claims": {
+            "description": "Agent claims currently synced from this backend.",
             "format": "int64",
             "type": "integer"
           },
           "agents_version": {
-            "description": "Version of the `agents` stream applied so far (`null` before the first sync).",
+            "description": "Applied version of the `agents` stream (`null` before the first sync).",
             "format": "int64",
             "type": [
               "integer",
@@ -203,14 +123,10 @@
             ]
           },
           "backend_id": {
-            "description": "Logical backend id (`BACKEND_ID` of the backend); checked against `GET /internal/info`.",
+            "description": "The backend's `BACKEND_ID`, checked against `GET /internal/info`; empty = not checked.",
             "type": "string"
           },
-          "computer_sync_version": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "created": {
+          "created_at": {
             "type": "string"
           },
           "id": {
@@ -220,27 +136,27 @@
           "is_active": {
             "type": "boolean"
           },
-          "modified": {
-            "type": "string"
-          },
           "name": {
             "type": "string"
           },
           "prefix_key": {
-            "description": "Path prefix key: the backend is reachable at `/t/<prefix_key>/`. Generated, never changes.",
+            "description": "Public path prefix key: the backend is reachable at `/t/<prefix_key>/`. Generated, immutable.",
+            "type": "string"
+          },
+          "updated_at": {
             "type": "string"
           },
           "upstream_url": {
-            "description": "`scheme://host[:port]` nginx proxies to; empty = not routed by the generated map.",
+            "description": "`scheme://host[:port]` nginx proxies to; empty = not routed.",
             "type": "string"
           },
-          "users_active": {
-            "description": "Active user claims stored for this backend.",
+          "user_claims": {
+            "description": "User claims currently synced from this backend.",
             "format": "int64",
             "type": "integer"
           },
           "users_version": {
-            "description": "Version of the `users` stream applied so far (`null` before the first sync).",
+            "description": "Applied version of the `users` stream (`null` before the first sync).",
             "format": "int64",
             "type": [
               "integer",
@@ -252,112 +168,93 @@
           "id",
           "prefix_key",
           "name",
-          "is_active",
-          "computer_sync_version",
-          "upstream_url",
           "backend_id",
-          "created",
-          "modified",
-          "users_active",
-          "agents_active"
+          "upstream_url",
+          "is_active",
+          "user_claims",
+          "agent_claims",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
-      "BackendWithMap": {
-        "description": "A backend (all `BackendView` fields) plus the nginx map result.",
+      "Claim": {
         "properties": {
-          "agents_active": {
+          "created_at": {
+            "type": "string"
+          },
+          "key": {
+            "description": "`entra:<tenant uuid>:<object uuid>` or the agent UUID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ClaimListResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Claim"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClaimsMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "ClaimsMeta": {
+        "properties": {
+          "total": {
+            "description": "Claims matching the filter (the list is cut at `limit`).",
             "format": "int64",
             "type": "integer"
-          },
-          "agents_version": {
+          }
+        },
+        "required": [
+          "total"
+        ],
+        "type": "object"
+      },
+      "ClaimsQuery": {
+        "properties": {
+          "limit": {
+            "description": "1 to 5000, default 500.",
             "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
-          "backend_id": {
-            "type": "string"
-          },
-          "computer_sync_version": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "created": {
-            "type": "string"
-          },
-          "id": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "is_active": {
-            "type": "boolean"
-          },
-          "modified": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "nginx_map": {
-            "$ref": "#/components/schemas/NginxMapResult"
-          },
-          "prefix_key": {
-            "type": "string"
-          },
-          "upstream_url": {
-            "type": "string"
-          },
-          "users_active": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "users_version": {
-            "format": "int64",
+          "search": {
+            "description": "Case-insensitive part of the key.",
             "type": [
-              "integer",
+              "string",
               "null"
             ]
           }
         },
-        "required": [
-          "id",
-          "prefix_key",
-          "name",
-          "is_active",
-          "computer_sync_version",
-          "upstream_url",
-          "backend_id",
-          "created",
-          "modified",
-          "users_active",
-          "agents_active",
-          "nginx_map"
-        ],
         "type": "object"
-      },
-      "BadRequestError": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/Detail"
-          },
-          {
-            "$ref": "#/components/schemas/FieldErrors"
-          }
-        ]
       },
       "Conflict": {
         "properties": {
           "backends": {
-            "description": "`prefix_key` of every active backend that claims it.",
+            "description": "`prefix_key` of every active backend that claims the key.",
             "items": {
               "type": "string"
             },
             "type": "array"
           },
           "key": {
-            "description": "Routing key (`entra:<tid>:<oid>` or agent UUID).",
             "type": "string"
           }
         },
@@ -387,219 +284,277 @@
         ],
         "type": "object"
       },
-      "ConflictList": {
+      "Conflicts": {
         "properties": {
           "agents": {
             "$ref": "#/components/schemas/ConflictGroup"
-          },
-          "policy": {
-            "description": "`reject` (conflicting keys resolve to 409) or `all` (every claiming backend is returned).",
-            "type": "string"
           },
           "users": {
             "$ref": "#/components/schemas/ConflictGroup"
           }
         },
         "required": [
-          "policy",
           "users",
           "agents"
         ],
         "type": "object"
       },
-      "Credentials": {
-        "description": "Optional admin credentials in the body (alternative to HTTP Basic auth).",
+      "ConflictsOpenapiConflictsDetailResponse": {
         "properties": {
-          "password": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "username": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "DeleteCounts": {
-        "description": "Rows removed by deleting a backend.",
-        "properties": {
-          "agents": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "backend": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "users": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
+          "data": {
+            "$ref": "#/components/schemas/Conflicts"
           }
         },
         "required": [
-          "backend",
-          "users",
-          "agents"
+          "data"
         ],
         "type": "object"
       },
-      "DeleteResult": {
+      "ErrorBody": {
         "properties": {
-          "deleted": {
-            "$ref": "#/components/schemas/DeleteCounts"
+          "code": {
+            "description": "Machine-stable error code, e.g. `validation_failed`, `not_routed`, `unauthorized`.",
+            "type": "string"
           },
-          "nginx_map": {
-            "$ref": "#/components/schemas/NginxMapResult"
-          }
-        },
-        "required": [
-          "deleted",
-          "nginx_map"
-        ],
-        "type": "object"
-      },
-      "Detail": {
-        "description": "Error body: `{\"detail\": \"...\"}`.",
-        "properties": {
-          "detail": {
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Same value as the `X-Request-ID` response header.",
             "type": "string"
           }
         },
         "required": [
-          "detail"
+          "code",
+          "message",
+          "details",
+          "request_id"
         ],
         "type": "object"
       },
-      "FieldErrors": {
-        "additionalProperties": {
-          "items": {
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "description": "Machine-stable reason, e.g. `required`, `unknown_field`, `out_of_range`.",
             "type": "string"
           },
-          "type": "array"
-        },
-        "description": "Field errors: `{\"<field>\": [\"message\", ...]}`.",
-        "propertyNames": {
-          "type": "string"
-        },
-        "type": "object"
-      },
-      "IdTokenRequest": {
-        "properties": {
-          "id_token": {
-            "description": "Microsoft (Azure AD) ID token of the user; its `tid` and `oid` claims give the routing key.",
+          "field": {
+            "description": "Request field or query parameter.",
+            "type": "string"
+          },
+          "message": {
             "type": "string"
           }
         },
         "required": [
-          "id_token"
+          "field",
+          "code",
+          "message"
         ],
         "type": "object"
       },
-      "LoginOk": {
+      "ErrorResponse": {
         "properties": {
-          "ok": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Job": {
+        "properties": {
+          "enabled": {
             "type": "boolean"
           },
-          "username": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "ok",
-          "username"
-        ],
-        "type": "object"
-      },
-      "Mapping": {
-        "description": "One item of the `mappings` list.",
-        "properties": {
-          "backend_name": {
-            "description": "Backend display name.",
-            "type": "string"
+          "interval_secs": {
+            "format": "int32",
+            "type": "integer"
           },
-          "prefix": {
-            "description": "Path prefix of the backend: `/t/<prefix_key>`.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "backend_name",
-          "prefix"
-        ],
-        "type": "object"
-      },
-      "MappingsQuery": {
-        "description": "Query of the user / agent mapping lists.",
-        "properties": {
-          "active": {
-            "description": "`true`, `false` or `all` (default).",
+          "last_run": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobRun"
+              }
+            ]
+          },
+          "last_run_at": {
             "type": [
               "string",
               "null"
             ]
           },
-          "limit": {
-            "description": "1 to 5000, default 500.",
+          "name": {
+            "description": "`check_users_stream`, `check_agents_stream` or `write_nginx_map`.",
+            "type": "string"
+          },
+          "running": {
+            "description": "A run is in progress in this replica.",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "enabled",
+          "interval_secs",
+          "updated_at",
+          "running"
+        ],
+        "type": "object"
+      },
+      "JobDetailOpenapiJobDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Job"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "JobRun": {
+        "properties": {
+          "duration_ms": {
             "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
-          "search": {
-            "description": "Case-insensitive text found in the id or in the name/sku.",
+          "error": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "job": {
+            "type": "string"
+          },
+          "result": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "description": "`running`, `succeeded` or `failed`.",
+            "type": "string"
+          },
+          "trigger": {
+            "description": "`schedule`, `manual`, `admin` or `startup`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job",
+          "trigger",
+          "status",
+          "started_at"
+        ],
+        "type": "object"
+      },
+      "JobUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "interval_secs": {
+            "description": "5 to 31 536 000 seconds.",
+            "format": "int32",
+            "type": [
+              "integer",
               "null"
             ]
           }
         },
         "type": "object"
       },
-      "MappingsResponse": {
+      "JobUpdatedOpenapiJobDetailResponse": {
         "properties": {
-          "mappings": {
+          "data": {
+            "$ref": "#/components/schemas/Job"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "JobsOpenapiJobListResponse": {
+        "properties": {
+          "data": {
             "items": {
-              "$ref": "#/components/schemas/Mapping"
+              "$ref": "#/components/schemas/Job"
             },
             "type": "array"
           }
         },
         "required": [
-          "mappings"
+          "data"
         ],
         "type": "object"
       },
-      "NginxEntry": {
+      "MapEntry": {
         "properties": {
           "prefix_key": {
             "type": "string"
           },
-          "source": {
-            "description": "`git` (static backends.map) or `database` (generated map).",
-            "type": "string"
-          },
-          "target": {
+          "upstream_url": {
             "type": "string"
           }
         },
         "required": [
           "prefix_key",
-          "target",
-          "source"
+          "upstream_url"
+        ],
+        "type": "object"
+      },
+      "MutationMeta": {
+        "properties": {
+          "nginx_map": {
+            "$ref": "#/components/schemas/NginxMapResult"
+          }
+        },
+        "required": [
+          "nginx_map"
         ],
         "type": "object"
       },
       "NginxMapResult": {
-        "description": "Result of regenerating the nginx map (`error` is set instead of the other fields when it failed).",
+        "description": "Outcome of rewriting the nginx map (`error` instead of the other fields when it failed).",
         "properties": {
           "changed": {
             "type": [
@@ -619,41 +574,45 @@
               "string",
               "null"
             ]
-          },
-          "file": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "skipped": {
-            "items": {
-              "$ref": "#/components/schemas/SkippedKey"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
           }
         },
+        "type": "object"
+      },
+      "NginxOpenapiNginxStatusDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/NginxStatus"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "NginxReloadOpenapiReloadRequestedDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReloadRequested"
+          }
+        },
+        "required": [
+          "data"
+        ],
         "type": "object"
       },
       "NginxStatus": {
         "properties": {
           "entries": {
             "items": {
-              "$ref": "#/components/schemas/NginxEntry"
+              "$ref": "#/components/schemas/MapEntry"
             },
             "type": "array"
           },
-          "generated_file": {
+          "map_file": {
             "type": "string"
           },
-          "git_file": {
-            "type": "string"
-          },
-          "nginx_status": {
-            "description": "Last result written by the nginx watcher script; `null` until nginx reports.",
+          "nginx": {
+            "description": "Last result reported by the nginx watcher; `null` until nginx reports.",
             "type": [
               "object",
               "null"
@@ -670,8 +629,7 @@
           }
         },
         "required": [
-          "git_file",
-          "generated_file",
+          "map_file",
           "entries",
           "problems",
           "reload_pending"
@@ -693,39 +651,138 @@
         ],
         "type": "object"
       },
-      "RunList": {
+      "ResolveAgentRequest": {
+        "additionalProperties": false,
         "properties": {
-          "runs": {
-            "items": {
-              "$ref": "#/components/schemas/TaskRun"
-            },
-            "type": "array"
+          "agent_id": {
+            "description": "Agent UUID (`agent_uid` on the backend).",
+            "type": "string"
           }
         },
         "required": [
-          "runs"
+          "agent_id"
+        ],
+        "type": "object"
+      },
+      "ResolveUserRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id_token": {
+            "description": "Microsoft Entra ID token of the user; its `tid` and `oid` claims give the routing key.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id_token"
+        ],
+        "type": "object"
+      },
+      "ResolvedAgentClaimsRouteDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Route"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ResolvedUserClaimsRouteDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Route"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "Route": {
+        "description": "A backend a key is routed to.",
+        "properties": {
+          "backend_id": {
+            "description": "The backend's logical id (`BACKEND_ID`); empty when not registered.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Display name of the backend.",
+            "type": "string"
+          },
+          "prefix": {
+            "description": "Path prefix of the backend on the Router: `/t/<prefix_key>`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend_id",
+          "name",
+          "prefix"
+        ],
+        "type": "object"
+      },
+      "RunDetailOpenapiJobRunDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/JobRun"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
       "RunStarted": {
         "properties": {
+          "job": {
+            "type": "string"
+          },
           "run_id": {
             "format": "int64",
             "type": "integer"
-          },
-          "task": {
-            "type": "string"
           }
         },
         "required": [
           "run_id",
-          "task"
+          "job"
+        ],
+        "type": "object"
+      },
+      "RunStartedOpenapiRunStartedDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RunStarted"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "RunsOpenapiJobRunListResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/JobRun"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
       "RunsQuery": {
-        "description": "Query of the run history.",
         "properties": {
+          "job": {
+            "description": "Only runs of this job.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "limit": {
             "description": "1 to 500, default 50.",
             "format": "int64",
@@ -733,128 +790,29 @@
               "integer",
               "null"
             ]
-          },
-          "task": {
-            "description": "Only this task name.",
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "type": "object"
       },
-      "ScheduleList": {
+      "Session": {
         "properties": {
-          "leader": {
-            "description": "This replica holds the sync leadership (runs the scheduler and the stream sync).",
-            "type": "boolean"
-          },
-          "scheduler_enabled": {
-            "type": "boolean"
-          },
-          "schedules": {
-            "items": {
-              "$ref": "#/components/schemas/ScheduleOut"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "scheduler_enabled",
-          "leader",
-          "schedules"
-        ],
-        "type": "object"
-      },
-      "ScheduleOut": {
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "interval_secs": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "last_run": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TaskRun"
-              }
-            ]
-          },
-          "last_run_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "type": "string"
-          },
-          "running": {
-            "description": "A run of this task is in progress in this process.",
-            "type": "boolean"
-          },
-          "updated_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "enabled",
-          "interval_secs",
-          "updated_at",
-          "running"
-        ],
-        "type": "object"
-      },
-      "ScheduleUpdateRequest": {
-        "properties": {
-          "enabled": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "interval_secs": {
-            "description": "5 to 31 536 000 seconds.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "password": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "username": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "SkippedKey": {
-        "properties": {
-          "prefix_key": {
-            "type": "string"
-          },
-          "reason": {
             "type": "string"
           }
         },
         "required": [
-          "prefix_key",
-          "reason"
+          "username"
+        ],
+        "type": "object"
+      },
+      "SessionOpenapiSessionDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -892,9 +850,21 @@
         ],
         "type": "object"
       },
+      "SyncOpenapiSyncStatusDetailResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SyncStatus"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "SyncStatus": {
         "properties": {
           "leader": {
+            "description": "This replica runs the stream sync and the scheduler.",
             "type": "boolean"
           },
           "leader_election": {
@@ -917,133 +887,18 @@
           "streams"
         ],
         "type": "object"
-      },
-      "TaskRun": {
-        "properties": {
-          "duration_ms": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "finished_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "result": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "started_at": {
-            "type": "string"
-          },
-          "status": {
-            "description": "`running`, `succeeded` or `failed`.",
-            "type": "string"
-          },
-          "task": {
-            "type": "string"
-          },
-          "trigger": {
-            "description": "`schedule`, `manual`, `admin`, `force` or `startup`.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "task",
-          "trigger",
-          "status",
-          "started_at"
-        ],
-        "type": "object"
-      },
-      "UserMapping": {
-        "properties": {
-          "created": {
-            "type": "string"
-          },
-          "display_name": {
-            "description": "Legacy column, no longer filled by the sync.",
-            "type": "string"
-          },
-          "id": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "is_active": {
-            "type": "boolean"
-          },
-          "modified": {
-            "type": "string"
-          },
-          "user_id": {
-            "description": "Routing key `entra:<tenant UUID>:<object UUID>`.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "user_id",
-          "display_name",
-          "is_active",
-          "created",
-          "modified"
-        ],
-        "type": "object"
-      },
-      "UserMappingList": {
-        "properties": {
-          "count": {
-            "description": "Rows returned (limited by `limit`).",
-            "format": "int64",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/UserMapping"
-            },
-            "type": "array"
-          },
-          "total": {
-            "description": "Rows matching the filter.",
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "total",
-          "count",
-          "items"
-        ],
-        "type": "object"
       }
     },
     "securitySchemes": {
       "basicAuth": {
-        "description": "ADMIN_USERNAME / ADMIN_PASSWORD from .env",
+        "description": "ADMIN_USERNAME / ADMIN_PASSWORD",
         "scheme": "basic",
         "type": "http"
       }
     }
   },
   "info": {
-    "description": "Routes users and agents to their department backend. Routing endpoints are public and served under the same paths through nginx; the original /routing/auth/backend-info/... paths (also under /api/v1/) are deprecated aliases answered with a Deprecation header. A key claimed by several backends answers 409 (ROUTING_CONFLICT_POLICY=reject). Admin endpoints need the admin account (HTTP Basic, or username/password in the JSON body). Errors are {\"detail\": ...} or {\"<field>\": [...]}.",
+    "description": "Routes users and agents to their department backend. The routing endpoints are public; the admin API needs the admin account (HTTP Basic). Responses use {\"data\": ...} and {\"error\": {\"code\", \"message\", \"details\", \"request_id\"}}; every response carries X-Request-ID.",
     "title": "LabMango Router",
     "version": "0.2.0"
   },
@@ -1051,7 +906,7 @@
   "paths": {
     "/admin/api/backends": {
       "get": {
-        "operationId": "adminListBackends",
+        "operationId": "listBackends",
         "responses": {
           "200": {
             "content": {
@@ -1067,7 +922,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1077,7 +932,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1095,7 +950,7 @@
         ]
       },
       "post": {
-        "operationId": "adminCreateBackend",
+        "operationId": "createBackend",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1111,7 +966,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackendWithMap"
+                  "$ref": "#/components/schemas/BackendMutationResponse"
                 }
               }
             },
@@ -1121,7 +976,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1131,7 +986,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1141,7 +996,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1161,7 +1016,7 @@
     },
     "/admin/api/backends/{id}": {
       "delete": {
-        "operationId": "adminDeleteBackend",
+        "operationId": "deleteBackend",
         "parameters": [
           {
             "description": "Backend id",
@@ -1174,21 +1029,14 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteResult"
-                }
-              }
-            },
-            "description": "OK"
+          "204": {
+            "description": "No Content"
           },
           "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1198,7 +1046,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1208,7 +1056,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1220,13 +1068,13 @@
             "basicAuth": []
           }
         ],
-        "summary": "Delete a backend and its user/agent mappings",
+        "summary": "Delete a backend with its claims and cursors",
         "tags": [
           "admin"
         ]
       },
       "get": {
-        "operationId": "adminGetBackend",
+        "operationId": "getBackend",
         "parameters": [
           {
             "description": "Backend id",
@@ -1243,7 +1091,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackendView"
+                  "$ref": "#/components/schemas/BackendDetail"
                 }
               }
             },
@@ -1253,7 +1101,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1263,7 +1111,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1273,7 +1121,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1285,13 +1133,13 @@
             "basicAuth": []
           }
         ],
-        "summary": "Get one backend",
+        "summary": "One backend",
         "tags": [
           "admin"
         ]
       },
       "patch": {
-        "operationId": "adminUpdateBackend",
+        "operationId": "updateBackend",
         "parameters": [
           {
             "description": "Backend id",
@@ -1318,7 +1166,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackendWithMap"
+                  "$ref": "#/components/schemas/BackendMutationResponse"
                 }
               }
             },
@@ -1328,7 +1176,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1338,7 +1186,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1348,7 +1196,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1358,7 +1206,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1378,7 +1226,7 @@
     },
     "/admin/api/backends/{id}/agents": {
       "get": {
-        "operationId": "adminListBackendAgents",
+        "operationId": "listAgentClaims",
         "parameters": [
           {
             "description": "Backend id",
@@ -1387,18 +1235,6 @@
             "required": true,
             "schema": {
               "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "active",
-            "required": false,
-            "schema": {
-              "description": "`true`, `false` or `all` (default).",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           {
@@ -1419,7 +1255,7 @@
             "name": "search",
             "required": false,
             "schema": {
-              "description": "Case-insensitive text found in the id or in the name/sku.",
+              "description": "Case-insensitive part of the key.",
               "type": [
                 "string",
                 "null"
@@ -1432,17 +1268,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentMappingList"
+                  "$ref": "#/components/schemas/ClaimListResponse"
                 }
               }
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
           "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1452,7 +1298,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1462,7 +1308,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1474,7 +1320,7 @@
             "basicAuth": []
           }
         ],
-        "summary": "Agent mappings of a backend",
+        "summary": "Agent claims of a backend",
         "tags": [
           "admin"
         ]
@@ -1482,7 +1328,7 @@
     },
     "/admin/api/backends/{id}/users": {
       "get": {
-        "operationId": "adminListBackendUsers",
+        "operationId": "listUserClaims",
         "parameters": [
           {
             "description": "Backend id",
@@ -1491,18 +1337,6 @@
             "required": true,
             "schema": {
               "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "active",
-            "required": false,
-            "schema": {
-              "description": "`true`, `false` or `all` (default).",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           {
@@ -1523,7 +1357,7 @@
             "name": "search",
             "required": false,
             "schema": {
-              "description": "Case-insensitive text found in the id or in the name/sku.",
+              "description": "Case-insensitive part of the key.",
               "type": [
                 "string",
                 "null"
@@ -1536,17 +1370,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserMappingList"
+                  "$ref": "#/components/schemas/ClaimListResponse"
                 }
               }
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
           "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1556,7 +1400,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1566,7 +1410,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1578,7 +1422,7 @@
             "basicAuth": []
           }
         ],
-        "summary": "User mappings of a backend",
+        "summary": "User claims of a backend",
         "tags": [
           "admin"
         ]
@@ -1586,13 +1430,13 @@
     },
     "/admin/api/jobs": {
       "get": {
-        "operationId": "adminListJobs",
+        "operationId": "listJobs",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScheduleList"
+                  "$ref": "#/components/schemas/JobsOpenapiJobListResponse"
                 }
               }
             },
@@ -1602,7 +1446,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1612,7 +1456,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1624,7 +1468,7 @@
             "basicAuth": []
           }
         ],
-        "summary": "Schedules and their last run",
+        "summary": "Jobs with their schedule and last run",
         "tags": [
           "admin"
         ]
@@ -1632,10 +1476,10 @@
     },
     "/admin/api/jobs/{name}": {
       "get": {
-        "operationId": "adminGetJob",
+        "operationId": "getJob",
         "parameters": [
           {
-            "description": "Job name, e.g. sync_all_backend_users",
+            "description": "Job name, e.g. check_users_stream",
             "in": "path",
             "name": "name",
             "required": true,
@@ -1649,7 +1493,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScheduleOut"
+                  "$ref": "#/components/schemas/JobDetailOpenapiJobDetailResponse"
                 }
               }
             },
@@ -1659,7 +1503,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1669,7 +1513,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1679,7 +1523,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1691,16 +1535,16 @@
             "basicAuth": []
           }
         ],
-        "summary": "One schedule and its last run",
+        "summary": "One job",
         "tags": [
           "admin"
         ]
       },
       "patch": {
-        "operationId": "adminUpdateJob",
+        "operationId": "updateJob",
         "parameters": [
           {
-            "description": "Job name, e.g. sync_all_backend_users",
+            "description": "Job name, e.g. check_users_stream",
             "in": "path",
             "name": "name",
             "required": true,
@@ -1713,7 +1557,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScheduleUpdateRequest"
+                "$ref": "#/components/schemas/JobUpdateRequest"
               }
             }
           },
@@ -1724,7 +1568,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScheduleOut"
+                  "$ref": "#/components/schemas/JobUpdatedOpenapiJobDetailResponse"
                 }
               }
             },
@@ -1734,7 +1578,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1744,7 +1588,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1754,7 +1598,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1764,7 +1608,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1776,7 +1620,7 @@
             "basicAuth": []
           }
         ],
-        "summary": "Enable/disable a job schedule or change its interval",
+        "summary": "Enable/disable a job or change its interval",
         "tags": [
           "admin"
         ]
@@ -1784,10 +1628,10 @@
     },
     "/admin/api/jobs/{name}/run": {
       "post": {
-        "operationId": "adminRunJob",
+        "operationId": "runJob",
         "parameters": [
           {
-            "description": "Job name, e.g. sync_all_backend_users",
+            "description": "Job name, e.g. check_users_stream",
             "in": "path",
             "name": "name",
             "required": true,
@@ -1801,7 +1645,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunStarted"
+                  "$ref": "#/components/schemas/RunStartedOpenapiRunStartedDetailResponse"
                 }
               }
             },
@@ -1811,7 +1655,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1821,7 +1665,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1831,7 +1675,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1841,7 +1685,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1853,51 +1697,31 @@
             "basicAuth": []
           }
         ],
-        "summary": "Run a task now",
+        "summary": "Run a job now (Location: the run)",
         "tags": [
           "admin"
         ]
       }
     },
-    "/admin/api/login": {
-      "post": {
-        "operationId": "adminLogin",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Credentials"
-              }
-            }
-          },
-          "required": true
-        },
+    "/admin/api/nginx": {
+      "get": {
+        "operationId": "nginxStatus",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LoginOk"
+                  "$ref": "#/components/schemas/NginxOpenapiNginxStatusDetailResponse"
                 }
               }
             },
             "description": "OK"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
           "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1907,7 +1731,249 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "summary": "nginx map, problems and last reload result",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/api/nginx/reload": {
+      "post": {
+        "operationId": "reloadNginx",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NginxReloadOpenapiReloadRequestedDetailResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "summary": "Rewrite the map and make nginx reload",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/api/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "job",
+            "required": false,
+            "schema": {
+              "description": "Only runs of this job.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "description": "1 to 500, default 50.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsOpenapiJobRunListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "summary": "Run history, newest first",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/api/runs/{id}": {
+      "get": {
+        "operationId": "getRun",
+        "parameters": [
+          {
+            "description": "Run id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailOpenapiJobRunDetailResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "summary": "One run",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/api/session": {
+      "get": {
+        "operationId": "adminSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOpenapiSessionDetailResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1925,190 +1991,15 @@
         ]
       }
     },
-    "/admin/api/nginx": {
-      "get": {
-        "operationId": "adminNginxStatus",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NginxStatus"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "basicAuth": []
-          }
-        ],
-        "summary": "Nginx routing table, problems and last reload result",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/admin/api/nginx/reload": {
-      "post": {
-        "operationId": "adminNginxReload",
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReloadRequested"
-                }
-              }
-            },
-            "description": "Accepted"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "basicAuth": []
-          }
-        ],
-        "summary": "Regenerate the map and force nginx to reload",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/admin/api/runs": {
-      "get": {
-        "operationId": "adminListRuns",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "description": "1 to 500, default 50.",
-              "format": "int64",
-              "type": [
-                "integer",
-                "null"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "task",
-            "required": false,
-            "schema": {
-              "description": "Only this task name.",
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RunList"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "basicAuth": []
-          }
-        ],
-        "summary": "Run history",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
     "/admin/api/sync": {
       "get": {
-        "operationId": "adminSyncStatus",
+        "operationId": "syncStatus",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SyncStatus"
+                  "$ref": "#/components/schemas/SyncOpenapiSyncStatusDetailResponse"
                 }
               }
             },
@@ -2118,7 +2009,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2128,7 +2019,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2140,7 +2031,7 @@
             "basicAuth": []
           }
         ],
-        "summary": "Routing stream cursors and sync leadership",
+        "summary": "Stream cursors and sync leadership",
         "tags": [
           "admin"
         ]
@@ -2148,13 +2039,13 @@
     },
     "/admin/api/sync/conflicts": {
       "get": {
-        "operationId": "adminListConflicts",
+        "operationId": "listConflicts",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConflictList"
+                  "$ref": "#/components/schemas/ConflictsOpenapiConflictsDetailResponse"
                 }
               }
             },
@@ -2164,7 +2055,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2174,7 +2065,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2192,150 +2083,6 @@
         ]
       }
     },
-    "/routing/auth/backend-info/by-agent-id/": {
-      "post": {
-        "deprecated": true,
-        "operationId": "legacyResolveAgent",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentIdRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MappingsResponse"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "415": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Unsupported Media Type"
-          }
-        },
-        "summary": "Deprecated alias of POST /routing/resolve/agent",
-        "tags": [
-          "routing"
-        ]
-      }
-    },
-    "/routing/auth/backend-info/by-id-token/": {
-      "post": {
-        "deprecated": true,
-        "operationId": "legacyResolveUser",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IdTokenRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MappingsResponse"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "415": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Detail"
-                }
-              }
-            },
-            "description": "Unsupported Media Type"
-          }
-        },
-        "summary": "Deprecated alias of POST /routing/resolve/user",
-        "tags": [
-          "routing"
-        ]
-      }
-    },
     "/routing/resolve/agent": {
       "post": {
         "operationId": "resolveAgent",
@@ -2343,7 +2090,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgentIdRequest"
+                "$ref": "#/components/schemas/ResolveAgentRequest"
               }
             }
           },
@@ -2354,7 +2101,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MappingsResponse"
+                  "$ref": "#/components/schemas/ResolvedAgentClaimsRouteDetailResponse"
                 }
               }
             },
@@ -2364,7 +2111,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2374,7 +2121,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2384,7 +2131,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2394,7 +2141,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2414,7 +2161,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/IdTokenRequest"
+                "$ref": "#/components/schemas/ResolveUserRequest"
               }
             }
           },
@@ -2425,7 +2172,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MappingsResponse"
+                  "$ref": "#/components/schemas/ResolvedUserClaimsRouteDetailResponse"
                 }
               }
             },
@@ -2435,7 +2182,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2445,7 +2192,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2455,7 +2202,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -2465,7 +2212,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Detail"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },

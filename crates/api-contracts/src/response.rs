@@ -9,7 +9,7 @@ use crate::error::{ContractError, Result};
 use crate::schema::{ResponseSchemaFactory, SchemaDef};
 use crate::settings::ContractSettings;
 
-/// Type-erased "is this JSON a valid `T`?" check (Python: `serializer.is_valid`).
+/// Type-erased "is this JSON a valid `T`?" check.
 pub(crate) type Validator = Arc<dyn Fn(&Value) -> std::result::Result<(), String> + Send + Sync>;
 
 pub(crate) fn validator_for<T: DeserializeOwned + 'static>(many: bool) -> Validator {
@@ -90,11 +90,11 @@ impl ProblemArgs {
     }
 }
 
-/// Nested validation errors, shaped like DRF's `serializer.errors`.
+/// Nested validation errors: field -> messages, or field -> nested errors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ErrorTree {
     None,
-    /// DRF `ErrorDetail` (message + code).
+    /// One message with its code.
     Detail {
         code: String,
         message: String,
@@ -117,7 +117,7 @@ impl From<Value> for ErrorTree {
             Value::Null => Self::None,
             Value::Object(map) => Self::Map(map.into_iter().map(|(k, v)| (k, v.into())).collect()),
             Value::Array(items) => Self::List(items.into_iter().map(Into::into).collect()),
-            // DRF error strings are `ErrorDetail`s (they carry a code), default "invalid".
+            // Plain error strings get the code "invalid".
             Value::String(message) => Self::Detail { code: "invalid".to_string(), message },
             other => Self::Other(other.to_string()),
         }
@@ -160,7 +160,7 @@ impl ResponseContract {
         Self { status_code, schema, many, is_paginated, settings: ContractSettings::default(), payload }
     }
 
-    /// Replace the wire conventions (Python: `settings=` argument).
+    /// Replace the wire conventions.
     pub fn with_settings(mut self, settings: ContractSettings) -> Self {
         self.settings = settings;
         self
@@ -304,7 +304,7 @@ impl ResponseContract {
         if self.is_paginated {
             return Err(ContractError::type_err("paginated contracts require respond_page()"));
         }
-        // 204 must not carry a body (the Python version leaves that to Django).
+        // 204 must not carry a body.
         let body = if self.status_code == 204 {
             None
         } else {
@@ -322,9 +322,7 @@ impl ResponseContract {
         }
         let data = match &self.payload {
             Payload::None => {
-                return Err(ContractError::type_err(
-                    "serialize() requires a success contract with a payload serializer",
-                ))
+                return Err(ContractError::type_err("serialize() requires a success contract with a payload type"))
             }
             Payload::Empty => json!({}),
             Payload::Typed(_) => {

@@ -3,9 +3,6 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-pub const PROBLEM_JSON: &str = "application/problem+json";
-pub const DEFAULT_PROBLEM_TYPE: &str = "about:blank";
-
 /// Turns an application error code into the wire value (default: snake_case).
 pub type CodeResolver = Arc<dyn Fn(&str) -> String + Send + Sync>;
 /// Builds the human readable problem message from `(detail, code, status)`.
@@ -14,7 +11,7 @@ pub type ProblemResolver = Arc<dyn Fn(Option<&Value>, Option<&str>, u16) -> Stri
 /// `NotFound`, `not-found`, `NOT FOUND` -> `not_found`.
 pub fn default_code_value(code: &str) -> String {
     let chars: Vec<char> = code.chars().collect();
-    // Step 1 (Python: re.sub(r"([a-z0-9])([A-Z])", r"\1_\2")): split camelCase.
+    // Step 1: split camelCase.
     let mut spaced = String::with_capacity(code.len() + 4);
     for (i, &c) in chars.iter().enumerate() {
         if i > 0 && c.is_ascii_uppercase() && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit()) {
@@ -39,7 +36,7 @@ pub fn default_code_value(code: &str) -> String {
     out
 }
 
-/// Python truthiness for JSON values (`None`, `False`, `0`, `""`, `[]`, `{}` are falsy).
+/// Truthiness of JSON values (`null`, `false`, `0`, `""`, `[]`, `{}` are falsy).
 pub(crate) fn is_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
@@ -51,7 +48,7 @@ pub(crate) fn is_truthy(v: &Value) -> bool {
     }
 }
 
-/// Python `str(value)` approximation: raw text for strings, JSON text otherwise.
+/// Text of a value: raw text for strings, JSON text otherwise.
 pub(crate) fn value_to_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -82,7 +79,7 @@ pub fn default_problem_detail(detail: Option<&Value>, code: Option<&str>, status
     http_phrase(status_code).to_string()
 }
 
-/// Equivalent of Python `HTTPStatus(code).phrase` (Python 3.13 wording).
+/// Reason phrase of an HTTP status code.
 /// Unknown codes fall back to "Unknown Status" instead of raising.
 pub(crate) fn http_phrase(code: u16) -> &'static str {
     match code {
@@ -157,11 +154,6 @@ pub(crate) fn http_phrase(code: u16) -> &'static str {
 pub struct ContractSettings {
     pub success_key: String,
     pub pagination_meta_key: String,
-    /// Kept for parity with the Python package, where it is declared but never
-    /// read. Problem responses are currently documented as `application/json`.
-    pub problem_content_type: String,
-    /// Same as above: declared, currently unused.
-    pub problem_type: String,
     pub code_resolver: CodeResolver,
     pub problem_detail_resolver: ProblemResolver,
 }
@@ -171,8 +163,6 @@ impl Default for ContractSettings {
         Self {
             success_key: "data".to_string(),
             pagination_meta_key: "meta".to_string(),
-            problem_content_type: PROBLEM_JSON.to_string(),
-            problem_type: DEFAULT_PROBLEM_TYPE.to_string(),
             code_resolver: Arc::new(default_code_value),
             problem_detail_resolver: Arc::new(default_problem_detail),
         }
@@ -184,8 +174,6 @@ impl fmt::Debug for ContractSettings {
         f.debug_struct("ContractSettings")
             .field("success_key", &self.success_key)
             .field("pagination_meta_key", &self.pagination_meta_key)
-            .field("problem_content_type", &self.problem_content_type)
-            .field("problem_type", &self.problem_type)
             .finish_non_exhaustive()
     }
 }

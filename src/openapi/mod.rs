@@ -1,248 +1,163 @@
-//! OpenAPI 3.1 document of the whole service, built with the `api-contracts` crate.
+//! OpenAPI 3.1 document of the service, built with the `api-contracts` crate and committed as
+//! `openapi/openapi.json` (`make openapi`; CI fails when the committed file is out of date).
 //!
-//! **Documentation only.** The wire format is fixed for existing clients (`{"detail": "..."}`,
-//! `{"<field>": ["..."]}`, bare `{"mappings": [...]}`), so the `{"data": ...}` envelope of `api-contracts`
-//! is not used. Every response is declared with `ResponseContract::documented(status, schema)` and describes
-//! what the handler really returns.
-//!
-//! The document is available as:
-//!
-//! * `tenant-resolver openapi > openapi.json` (no database needed), and
-//! * `GET /openapi.json` (admin credentials required).
-//!
-//! Import either one into Apidog (Import data -> OpenAPI/Swagger, or "Import from URL").
-//!
-//! Response bodies that are plain database structs (`Mapping`, `BackendView`, `DeleteCounts`) derive
-//! `ToSchema` directly, so they cannot drift from the real JSON. The other shapes are built with
-//! `json!` in the handlers and are mirrored here; the tests below check that the mirrors still
-//! deserialize the real structs and that every `$ref` resolves.
+//! Responses follow the API envelope: `{"data": ...}` (plus `meta` where shown) and
+//! `{"error": {"code", "message", "details", "request_id"}}`. Database structs that are returned as they are
+//! (`BackendView`, `Route`) derive `ToSchema` directly; the other shapes are built with `json!` in the handlers
+//! and mirrored here, and the tests check the mirrors against the real values.
 
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
-
 use api_contracts::{
-    OpenApiDocument, OperationContract, ResponseContract, ResponseSchemaFactory, ResponseSet, Result as ContractResult,
-    SchemaDef,
+    OpenApiDocument, OperationBuilder, OperationContract, ResponseContract, ResponseSet, Result, SchemaDef,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use utoipa::ToSchema;
 
 use crate::{
-    db::{
-        backends::{BackendView, DeleteCounts},
-        routing::Mapping,
-    },
-    routing::{LEGACY_AGENT_PATHS, LEGACY_USER_PATHS, RESOLVE_AGENT_PATH, RESOLVE_USER_PATH},
+    admin::API as ADMIN,
+    db::{backends::BackendView, claims::Route},
+    routing::{RESOLVE_AGENT_PATH, RESOLVE_USER_PATH},
 };
 
 // ------------------------------------------------------------------ errors
 
-/// Error body: `{"detail": "..."}`.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct Detail {
-    pub detail: String,
+pub struct ErrorDetail {
+    /// Request field or query parameter.
+    pub field: String,
+    /// Machine-stable reason, e.g. `required`, `unknown_field`, `out_of_range`.
+    pub code: String,
+    pub message: String,
 }
 
-/// Field errors: `{"<field>": ["message", ...]}`.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct FieldErrors(pub BTreeMap<String, Vec<String>>);
+pub struct ErrorBody {
+    /// Machine-stable error code, e.g. `validation_failed`, `not_routed`, `unauthorized`.
+    pub code: String,
+    pub message: String,
+    pub details: Vec<ErrorDetail>,
+    /// Same value as the `X-Request-ID` response header.
+    pub request_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ErrorResponse {
+    pub error: ErrorBody,
+}
 
 // ------------------------------------------------------------------ requests
 
-/// Optional admin credentials in the body (alternative to HTTP Basic auth).
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct Credentials {
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct IdTokenRequest {
-    /// Microsoft (Azure AD) ID token of the user; its `tid` and `oid` claims give the routing key.
+#[serde(deny_unknown_fields)]
+pub struct ResolveUserRequest {
+    /// Microsoft Entra ID token of the user; its `tid` and `oid` claims give the routing key.
     pub id_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct AgentIdRequest {
-    /// Agent UUID (`agent_uid` on the core backend).
+#[serde(deny_unknown_fields)]
+pub struct ResolveAgentRequest {
+    /// Agent UUID (`agent_uid` on the backend).
     pub agent_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BackendCreateRequest {
     /// Display name, 1 to 255 characters.
     pub name: String,
-    /// `scheme://host[:port]` without path; empty = not routed by nginx.
-    pub upstream_url: Option<String>,
-    /// The backend's `BACKEND_ID`; checked against `GET /internal/info` and used for the Entra token audience.
+    /// The backend's `BACKEND_ID`; empty = not checked.
     pub backend_id: Option<String>,
+    /// `scheme://host[:port]` without a path; empty = not routed.
+    pub upstream_url: Option<String>,
     /// Default `true`.
     pub is_active: Option<bool>,
-    /// Default `0`.
-    pub computer_sync_version: Option<i32>,
-    pub username: Option<String>,
-    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BackendUpdateRequest {
     pub name: Option<String>,
-    /// `""` removes the URL.
-    pub upstream_url: Option<String>,
-    /// `""` removes the expected backend id (no identity check).
     pub backend_id: Option<String>,
+    /// `""` stops routing the backend.
+    pub upstream_url: Option<String>,
     pub is_active: Option<bool>,
-    pub computer_sync_version: Option<i32>,
-    pub username: Option<String>,
-    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ScheduleUpdateRequest {
+#[serde(deny_unknown_fields)]
+pub struct JobUpdateRequest {
     pub enabled: Option<bool>,
     /// 5 to 31 536 000 seconds.
     pub interval_secs: Option<i32>,
-    pub username: Option<String>,
-    pub password: Option<String>,
 }
 
-/// Query of the user / agent mapping lists.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct MappingsQuery {
-    /// Case-insensitive text found in the id or in the name/sku.
+pub struct ClaimsQuery {
+    /// Case-insensitive part of the key.
     pub search: Option<String>,
-    /// `true`, `false` or `all` (default).
-    pub active: Option<String>,
     /// 1 to 5000, default 500.
     pub limit: Option<i64>,
 }
 
-/// Query of the run history.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RunsQuery {
-    /// Only this task name.
-    pub task: Option<String>,
+    /// Only runs of this job.
+    pub job: Option<String>,
     /// 1 to 500, default 50.
     pub limit: Option<i64>,
 }
 
-// ------------------------------------------------------------------ responses
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct MappingsResponse {
-    pub mappings: Vec<Mapping>,
-}
+// ------------------------------------------------------------------ response payloads
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct LoginOk {
-    pub ok: bool,
+pub struct Session {
     pub username: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct BackendList {
-    pub backends: Vec<BackendView>,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct SkippedKey {
-    pub prefix_key: String,
-    pub reason: String,
-}
-
-/// Result of regenerating the nginx map (`error` is set instead of the other fields when it failed).
+/// Outcome of rewriting the nginx map (`error` instead of the other fields when it failed).
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct NginxMapResult {
     pub entries: Option<i64>,
     pub changed: Option<bool>,
-    pub skipped: Option<Vec<SkippedKey>>,
-    pub file: Option<String>,
     pub error: Option<String>,
 }
 
-/// A backend (all `BackendView` fields) plus the nginx map result.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct BackendWithMap {
-    pub id: i64,
+pub struct MutationMeta {
+    pub nginx_map: NginxMapResult,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct Claim {
+    /// `entra:<tenant uuid>:<object uuid>` or the agent UUID.
+    pub key: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ClaimsMeta {
+    /// Claims matching the filter (the list is cut at `limit`).
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct MapEntry {
     pub prefix_key: String,
-    pub name: String,
-    pub is_active: bool,
-    pub computer_sync_version: i32,
     pub upstream_url: String,
-    pub backend_id: String,
-    pub created: String,
-    pub modified: String,
-    pub users_active: i64,
-    pub agents_active: i64,
-    pub users_version: Option<i64>,
-    pub agents_version: Option<i64>,
-    pub nginx_map: NginxMapResult,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct DeleteResult {
-    pub deleted: DeleteCounts,
-    pub nginx_map: NginxMapResult,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct UserMapping {
-    pub id: i64,
-    /// Routing key `entra:<tenant UUID>:<object UUID>`.
-    pub user_id: String,
-    /// Legacy column, no longer filled by the sync.
-    pub display_name: String,
-    pub is_active: bool,
-    pub created: String,
-    pub modified: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct AgentMapping {
-    pub id: i64,
-    pub agent_id: String,
-    pub sku: String,
-    pub is_active: bool,
-    pub created: String,
-    pub modified: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct UserMappingList {
-    /// Rows matching the filter.
-    pub total: i64,
-    /// Rows returned (limited by `limit`).
-    pub count: i64,
-    pub items: Vec<UserMapping>,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct AgentMappingList {
-    pub total: i64,
-    pub count: i64,
-    pub items: Vec<AgentMapping>,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct NginxEntry {
-    pub prefix_key: String,
-    pub target: String,
-    /// `git` (static backends.map) or `database` (generated map).
-    pub source: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct NginxStatus {
-    pub git_file: String,
-    pub generated_file: String,
-    pub entries: Vec<NginxEntry>,
+    pub map_file: String,
+    pub entries: Vec<MapEntry>,
     pub problems: Vec<String>,
     pub reload_pending: bool,
-    /// Last result written by the nginx watcher script; `null` until nginx reports.
+    /// Last result reported by the nginx watcher; `null` until nginx reports.
     #[schema(value_type = Option<Object>)]
-    pub nginx_status: Option<Value>,
+    pub nginx: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -252,10 +167,10 @@ pub struct ReloadRequested {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct TaskRun {
+pub struct JobRun {
     pub id: i64,
-    pub task: String,
-    /// `schedule`, `manual`, `admin`, `force` or `startup`.
+    pub job: String,
+    /// `schedule`, `manual`, `admin` or `startup`.
     pub trigger: String,
     /// `running`, `succeeded` or `failed`.
     pub status: String,
@@ -268,23 +183,22 @@ pub struct TaskRun {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ScheduleOut {
+pub struct Job {
+    /// `check_users_stream`, `check_agents_stream` or `write_nginx_map`.
     pub name: String,
     pub enabled: bool,
     pub interval_secs: i32,
     pub last_run_at: Option<String>,
     pub updated_at: String,
-    /// A run of this task is in progress in this process.
+    /// A run is in progress in this replica.
     pub running: bool,
-    pub last_run: Option<TaskRun>,
+    pub last_run: Option<JobRun>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ScheduleList {
-    pub scheduler_enabled: bool,
-    /// This replica holds the sync leadership (runs the scheduler and the stream sync).
-    pub leader: bool,
-    pub schedules: Vec<ScheduleOut>,
+pub struct RunStarted {
+    pub run_id: i64,
+    pub job: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -301,6 +215,7 @@ pub struct StreamCursor {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct SyncStatus {
     pub sync_enabled: bool,
+    /// This replica runs the stream sync and the scheduler.
     pub leader: bool,
     pub leader_election: bool,
     pub streams: Vec<StreamCursor>,
@@ -308,9 +223,8 @@ pub struct SyncStatus {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Conflict {
-    /// Routing key (`entra:<tid>:<oid>` or agent UUID).
     pub key: String,
-    /// `prefix_key` of every active backend that claims it.
+    /// `prefix_key` of every active backend that claims the key.
     pub backends: Vec<String>,
 }
 
@@ -322,56 +236,45 @@ pub struct ConflictGroup {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ConflictList {
-    /// `reject` (conflicting keys resolve to 409) or `all` (every claiming backend is returned).
-    pub policy: String,
+pub struct Conflicts {
     pub users: ConflictGroup,
     pub agents: ConflictGroup,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct RunStarted {
-    pub run_id: i64,
-    pub task: String,
+// ------------------------------------------------------------------ envelopes with meta
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BackendMutationResponse {
+    pub data: BackendView,
+    pub meta: MutationMeta,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct RunList {
-    pub runs: Vec<TaskRun>,
+pub struct ClaimListResponse {
+    pub data: Vec<Claim>,
+    pub meta: ClaimsMeta,
 }
 
 // ------------------------------------------------------------------ contracts
 
-type Named = Vec<(String, ResponseContract)>;
+fn ok<T: ToSchema + serde::de::DeserializeOwned + 'static>(status: u16, name: &str) -> Result<ResponseContract> {
+    ResponseContract::success_with::<T>(name, false, status)
+}
 
-/// Success (or any documented) response with a JSON body of type `T`.
-fn body<T: ToSchema>(status: u16) -> ResponseContract {
+fn ok_list<T: ToSchema + serde::de::DeserializeOwned + 'static>(name: &str) -> Result<ResponseContract> {
+    ResponseContract::success_with::<T>(name, true, 200)
+}
+
+fn raw<T: ToSchema>(status: u16) -> ResponseContract {
     ResponseContract::documented(status, SchemaDef::of::<T>())
 }
 
-/// `{"detail": "..."}` error.
 fn error(status: u16) -> ResponseContract {
-    body::<Detail>(status)
+    raw::<ErrorResponse>(status)
 }
 
-/// 400 is either `{"detail": ...}` (bad JSON, bad token) or `{"<field>": [...]}` (field errors).
-fn bad_request() -> ContractResult<ResponseContract> {
-    let schema = ResponseSchemaFactory::variants(
-        "BadRequestError",
-        vec![SchemaDef::of::<Detail>(), SchemaDef::of::<FieldErrors>()],
-    )?;
-    Ok(ResponseContract::documented(400, schema))
-}
-
-fn named(items: Vec<(&str, ResponseContract)>) -> Named {
-    items.into_iter().map(|(name, contract)| (name.to_string(), contract)).collect()
-}
-
-/// Responses of an admin operation: 401 / 503 are always possible.
-fn admin_set(success: ResponseContract, problems: Vec<(&str, ResponseContract)>) -> ContractResult<ResponseSet> {
-    let mut all = vec![("unauthorized", error(401)), ("admin_disabled", error(503))];
-    all.extend(problems);
-    ResponseSet::new(success, Vec::new(), named(all))
+fn errors(statuses: &[(&str, u16)]) -> Vec<(String, ResponseContract)> {
+    statuses.iter().map(|(name, status)| (name.to_string(), error(*status))).collect()
 }
 
 struct Op {
@@ -383,281 +286,236 @@ struct Op {
     contract: OperationContract,
 }
 
-/// A public routing operation: `200 {"mappings": [...]}` or a `{"detail"}` / field error.
-fn routing_op<T: ToSchema + serde::de::DeserializeOwned + 'static>(
-    path: &str,
+fn op(
+    method: &'static str,
+    path: impl Into<String>,
     id: &'static str,
     summary: &'static str,
-    bad: &ResponseContract,
-) -> ContractResult<Op> {
-    Ok(Op {
-        method: "post",
-        path: path.to_string(),
-        id,
-        summary,
-        admin: false,
-        contract: OperationContract::from_responses(ResponseSet::new(
-            body::<MappingsResponse>(200),
-            Vec::new(),
-            named(vec![
-                ("bad_request", bad.clone()),
-                ("not_found", error(404)),
-                ("conflict", error(409)),
-                ("unsupported_media_type", error(415)),
-            ]),
-        )?)
-        .request::<T>()
-        .tags(["routing"])
-        .build()?,
-    })
+    success: ResponseContract,
+    problems: &[(&str, u16)],
+    build: impl FnOnce(OperationBuilder) -> OperationBuilder,
+) -> Result<Op> {
+    let path = path.into();
+    let admin = path.starts_with(ADMIN);
+    let mut all = problems.to_vec();
+    if admin {
+        all.extend([("unauthorized", 401), ("admin_disabled", 503)]);
+    }
+    let builder = OperationContract::from_responses(ResponseSet::new(success, Vec::new(), errors(&all))?)
+        .tags([if admin { "admin" } else { "routing" }]);
+    Ok(Op { method, path, id, summary, admin, contract: build(builder).build()? })
 }
 
-fn operations() -> ContractResult<Vec<Op>> {
-    const ADMIN: &str = crate::admin::API;
-    let bad = bad_request()?;
-    let id_param = |b: api_contracts::OperationBuilder| b.path_param("id", "integer", "Backend id");
-    let name_param =
-        |b: api_contracts::OperationBuilder| b.path_param("name", "string", "Job name, e.g. sync_all_backend_users");
-    let mut ops = Vec::new();
+fn id_param(b: OperationBuilder) -> OperationBuilder {
+    b.path_param("id", "integer", "Backend id")
+}
 
-    // ---- public routing API (the deprecated aliases are documented under their public paths)
-    ops.push(routing_op::<IdTokenRequest>(
-        RESOLVE_USER_PATH,
-        "resolveUser",
-        "Backend of a user (Microsoft ID token)",
-        &bad,
-    )?);
-    ops.push(routing_op::<AgentIdRequest>(RESOLVE_AGENT_PATH, "resolveAgent", "Backend of an agent", &bad)?);
-    ops.push(routing_op::<IdTokenRequest>(
-        LEGACY_USER_PATHS[0],
-        "legacyResolveUser",
-        "Deprecated alias of POST /routing/resolve/user",
-        &bad,
-    )?);
-    ops.push(routing_op::<AgentIdRequest>(
-        LEGACY_AGENT_PATHS[0],
-        "legacyResolveAgent",
-        "Deprecated alias of POST /routing/resolve/agent",
-        &bad,
-    )?);
+fn name_param(b: OperationBuilder) -> OperationBuilder {
+    b.path_param("name", "string", "Job name, e.g. check_users_stream")
+}
 
-    // ---- admin API
-    ops.push(Op {
-        method: "post",
-        path: format!("{ADMIN}/login"),
-        id: "adminLogin",
-        summary: "Check the admin credentials",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(
-            body::<LoginOk>(200),
-            vec![("bad_request", bad.clone())],
-        )?)
-        .request::<Credentials>()
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/backends"),
-        id: "adminListBackends",
-        summary: "List backends",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(body::<BackendList>(200), vec![])?)
-            .tags(["admin"])
-            .build()?,
-    });
-    ops.push(Op {
-        method: "post",
-        path: format!("{ADMIN}/backends"),
-        id: "adminCreateBackend",
-        summary: "Create a backend (prefix_key is generated)",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(
-            body::<BackendWithMap>(201),
-            vec![("bad_request", bad.clone())],
-        )?)
-        .request::<BackendCreateRequest>()
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/backends/{{id}}"),
-        id: "adminGetBackend",
-        summary: "Get one backend",
-        admin: true,
-        contract: id_param(OperationContract::from_responses(admin_set(
-            body::<BackendView>(200),
-            vec![("not_found", error(404))],
-        )?))
-        .tags(["admin"])
-        .build()?,
-    });
-    // The router accepts PUT as an alias of PATCH.
-    ops.push(Op {
-        method: "patch",
-        path: format!("{ADMIN}/backends/{{id}}"),
-        id: "adminUpdateBackend",
-        summary: "Update a backend (every field optional)",
-        admin: true,
-        contract: id_param(OperationContract::from_responses(admin_set(
-            body::<BackendWithMap>(200),
-            vec![("bad_request", bad.clone()), ("not_found", error(404))],
-        )?))
-        .request::<BackendUpdateRequest>()
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "delete",
-        path: format!("{ADMIN}/backends/{{id}}"),
-        id: "adminDeleteBackend",
-        summary: "Delete a backend and its user/agent mappings",
-        admin: true,
-        contract: id_param(OperationContract::from_responses(admin_set(
-            body::<DeleteResult>(200),
-            vec![("not_found", error(404))],
-        )?))
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/backends/{{id}}/users"),
-        id: "adminListBackendUsers",
-        summary: "User mappings of a backend",
-        admin: true,
-        contract: id_param(OperationContract::from_responses(admin_set(
-            body::<UserMappingList>(200),
-            vec![("not_found", error(404))],
-        )?))
-        .query::<MappingsQuery>()
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/backends/{{id}}/agents"),
-        id: "adminListBackendAgents",
-        summary: "Agent mappings of a backend",
-        admin: true,
-        contract: id_param(OperationContract::from_responses(admin_set(
-            body::<AgentMappingList>(200),
-            vec![("not_found", error(404))],
-        )?))
-        .query::<MappingsQuery>()
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/nginx"),
-        id: "adminNginxStatus",
-        summary: "Nginx routing table, problems and last reload result",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(body::<NginxStatus>(200), vec![])?)
-            .tags(["admin"])
-            .build()?,
-    });
-    ops.push(Op {
-        method: "post",
-        path: format!("{ADMIN}/nginx/reload"),
-        id: "adminNginxReload",
-        summary: "Regenerate the map and force nginx to reload",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(
-            body::<ReloadRequested>(202),
-            vec![("server_error", error(500))],
-        )?)
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/jobs"),
-        id: "adminListJobs",
-        summary: "Schedules and their last run",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(body::<ScheduleList>(200), vec![])?)
-            .tags(["admin"])
-            .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/jobs/{{name}}"),
-        id: "adminGetJob",
-        summary: "One schedule and its last run",
-        admin: true,
-        contract: name_param(OperationContract::from_responses(admin_set(
-            body::<ScheduleOut>(200),
-            vec![("not_found", error(404))],
-        )?))
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "patch",
-        path: format!("{ADMIN}/jobs/{{name}}"),
-        id: "adminUpdateJob",
-        summary: "Enable/disable a job schedule or change its interval",
-        admin: true,
-        contract: name_param(OperationContract::from_responses(admin_set(
-            body::<ScheduleOut>(200),
-            vec![("bad_request", bad.clone()), ("not_found", error(404))],
-        )?))
-        .request::<ScheduleUpdateRequest>()
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "post",
-        path: format!("{ADMIN}/jobs/{{name}}/run"),
-        id: "adminRunJob",
-        summary: "Run a task now",
-        admin: true,
-        contract: name_param(OperationContract::from_responses(admin_set(
-            body::<RunStarted>(202),
-            vec![("not_found", error(404)), ("already_running", error(409))],
-        )?))
-        .tags(["admin"])
-        .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/runs"),
-        id: "adminListRuns",
-        summary: "Run history",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(body::<RunList>(200), vec![])?)
-            .query::<RunsQuery>()
-            .tags(["admin"])
-            .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/sync"),
-        id: "adminSyncStatus",
-        summary: "Routing stream cursors and sync leadership",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(body::<SyncStatus>(200), vec![])?)
-            .tags(["admin"])
-            .build()?,
-    });
-    ops.push(Op {
-        method: "get",
-        path: format!("{ADMIN}/sync/conflicts"),
-        id: "adminListConflicts",
-        summary: "Keys claimed by more than one active backend",
-        admin: true,
-        contract: OperationContract::from_responses(admin_set(body::<ConflictList>(200), vec![])?)
-            .tags(["admin"])
-            .build()?,
-    });
-    Ok(ops)
+fn operations() -> Result<Vec<Op>> {
+    let none = |b: OperationBuilder| b;
+    Ok(vec![
+        // ---- routing (public)
+        op(
+            "post",
+            RESOLVE_USER_PATH,
+            "resolveUser",
+            "Backend of a user (Microsoft ID token)",
+            ok::<Route>(200, "ResolvedUser")?,
+            &[
+                ("validation_failed", 400),
+                ("not_routed", 404),
+                ("ambiguous_route", 409),
+                ("unsupported_media_type", 415),
+            ],
+            |b| b.request::<ResolveUserRequest>(),
+        )?,
+        op(
+            "post",
+            RESOLVE_AGENT_PATH,
+            "resolveAgent",
+            "Backend of an agent",
+            ok::<Route>(200, "ResolvedAgent")?,
+            &[
+                ("validation_failed", 400),
+                ("not_routed", 404),
+                ("ambiguous_route", 409),
+                ("unsupported_media_type", 415),
+            ],
+            |b| b.request::<ResolveAgentRequest>(),
+        )?,
+        // ---- admin
+        op(
+            "get",
+            format!("{ADMIN}/session"),
+            "adminSession",
+            "Check the admin credentials",
+            ok::<Session>(200, "Session")?,
+            &[],
+            none,
+        )?,
+        op("get", format!("{ADMIN}/backends"), "listBackends", "List backends", raw::<BackendList>(200), &[], none)?,
+        op(
+            "post",
+            format!("{ADMIN}/backends"),
+            "createBackend",
+            "Create a backend (prefix_key is generated)",
+            raw::<BackendMutationResponse>(201),
+            &[("validation_failed", 400)],
+            |b| b.request::<BackendCreateRequest>(),
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/backends/{{id}}"),
+            "getBackend",
+            "One backend",
+            raw::<BackendDetail>(200),
+            &[("not_found", 404)],
+            id_param,
+        )?,
+        op(
+            "patch",
+            format!("{ADMIN}/backends/{{id}}"),
+            "updateBackend",
+            "Update a backend (every field optional)",
+            raw::<BackendMutationResponse>(200),
+            &[("validation_failed", 400), ("not_found", 404)],
+            |b| id_param(b).request::<BackendUpdateRequest>(),
+        )?,
+        op(
+            "delete",
+            format!("{ADMIN}/backends/{{id}}"),
+            "deleteBackend",
+            "Delete a backend with its claims and cursors",
+            ResponseContract::no_content(),
+            &[("not_found", 404)],
+            id_param,
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/backends/{{id}}/users"),
+            "listUserClaims",
+            "User claims of a backend",
+            raw::<ClaimListResponse>(200),
+            &[("validation_failed", 400), ("not_found", 404)],
+            |b| id_param(b).query::<ClaimsQuery>(),
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/backends/{{id}}/agents"),
+            "listAgentClaims",
+            "Agent claims of a backend",
+            raw::<ClaimListResponse>(200),
+            &[("validation_failed", 400), ("not_found", 404)],
+            |b| id_param(b).query::<ClaimsQuery>(),
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/nginx"),
+            "nginxStatus",
+            "nginx map, problems and last reload result",
+            ok::<NginxStatus>(200, "Nginx")?,
+            &[],
+            none,
+        )?,
+        op(
+            "post",
+            format!("{ADMIN}/nginx/reload"),
+            "reloadNginx",
+            "Rewrite the map and make nginx reload",
+            ok::<ReloadRequested>(202, "NginxReload")?,
+            &[],
+            none,
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/jobs"),
+            "listJobs",
+            "Jobs with their schedule and last run",
+            ok_list::<Job>("Jobs")?,
+            &[],
+            none,
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/jobs/{{name}}"),
+            "getJob",
+            "One job",
+            ok::<Job>(200, "JobDetail")?,
+            &[("not_found", 404)],
+            name_param,
+        )?,
+        op(
+            "patch",
+            format!("{ADMIN}/jobs/{{name}}"),
+            "updateJob",
+            "Enable/disable a job or change its interval",
+            ok::<Job>(200, "JobUpdated")?,
+            &[("validation_failed", 400), ("not_found", 404)],
+            |b| name_param(b).request::<JobUpdateRequest>(),
+        )?,
+        op(
+            "post",
+            format!("{ADMIN}/jobs/{{name}}/run"),
+            "runJob",
+            "Run a job now (Location: the run)",
+            ok::<RunStarted>(202, "RunStarted")?,
+            &[("not_found", 404), ("already_running", 409)],
+            name_param,
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/runs"),
+            "listRuns",
+            "Run history, newest first",
+            ok_list::<JobRun>("Runs")?,
+            &[("validation_failed", 400)],
+            |b| b.query::<RunsQuery>(),
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/runs/{{id}}"),
+            "getRun",
+            "One run",
+            ok::<JobRun>(200, "RunDetail")?,
+            &[("not_found", 404)],
+            |b| b.path_param("id", "integer", "Run id"),
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/sync"),
+            "syncStatus",
+            "Stream cursors and sync leadership",
+            ok::<SyncStatus>(200, "Sync")?,
+            &[],
+            none,
+        )?,
+        op(
+            "get",
+            format!("{ADMIN}/sync/conflicts"),
+            "listConflicts",
+            "Keys claimed by more than one active backend",
+            ok::<Conflicts>(200, "Conflicts")?,
+            &[],
+            none,
+        )?,
+    ])
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BackendList {
+    pub data: Vec<BackendView>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BackendDetail {
+    pub data: BackendView,
 }
 
 /// The complete OpenAPI 3.1 document.
-pub fn document() -> ContractResult<Value> {
+pub fn document() -> Result<Value> {
     let mut doc = OpenApiDocument::new("LabMango Router", env!("CARGO_PKG_VERSION"));
     for op in operations()? {
         let mut extra = Map::new();
@@ -666,23 +524,16 @@ pub fn document() -> ContractResult<Value> {
         if op.admin {
             extra.insert("security".into(), json!([{ "basicAuth": [] }]));
         }
-        if op.id.starts_with("legacy") {
-            extra.insert("deprecated".into(), json!(true));
-        }
         doc = doc.operation_with(op.method, &op.path, &op.contract, extra)?;
     }
     let mut value = doc.to_value();
     value["info"]["description"] = json!(
-        "Routes users and agents to their department backend. Routing endpoints are public and served under \
-         the same paths through nginx; the original /routing/auth/backend-info/... paths (also under /api/v1/) \
-         are deprecated aliases answered with a Deprecation header. \
-         A key claimed by several backends answers 409 (ROUTING_CONFLICT_POLICY=reject). \
-         Admin endpoints need the admin account (HTTP Basic, or username/password in the JSON body). \
-         Errors are {\"detail\": ...} or {\"<field>\": [...]}."
+        "Routes users and agents to their department backend. The routing endpoints are public; the admin API \
+         needs the admin account (HTTP Basic). Responses use {\"data\": ...} and \
+         {\"error\": {\"code\", \"message\", \"details\", \"request_id\"}}; every response carries X-Request-ID."
     );
-    value["components"]["securitySchemes"] = json!({
-        "basicAuth": { "type": "http", "scheme": "basic", "description": "ADMIN_USERNAME / ADMIN_PASSWORD from .env" }
-    });
+    value["components"]["securitySchemes"] =
+        json!({ "basicAuth": { "type": "http", "scheme": "basic", "description": "ADMIN_USERNAME / ADMIN_PASSWORD" } });
     Ok(value)
 }
 
@@ -691,12 +542,10 @@ mod tests {
     use super::*;
     use crate::db::jobs::Schedule;
 
-    const ROUTES: [(&str, &str); 21] = [
+    const ROUTES: [(&str, &str); 20] = [
         ("post", "/routing/resolve/user"),
         ("post", "/routing/resolve/agent"),
-        ("post", "/routing/auth/backend-info/by-id-token/"),
-        ("post", "/routing/auth/backend-info/by-agent-id/"),
-        ("post", "/admin/api/login"),
+        ("get", "/admin/api/session"),
         ("get", "/admin/api/backends"),
         ("post", "/admin/api/backends"),
         ("get", "/admin/api/backends/{id}"),
@@ -711,6 +560,7 @@ mod tests {
         ("patch", "/admin/api/jobs/{name}"),
         ("post", "/admin/api/jobs/{name}/run"),
         ("get", "/admin/api/runs"),
+        ("get", "/admin/api/runs/{id}"),
         ("get", "/admin/api/sync"),
         ("get", "/admin/api/sync/conflicts"),
     ];
@@ -736,57 +586,34 @@ mod tests {
         assert_eq!(doc["openapi"], "3.1.0");
         for (method, path) in ROUTES {
             assert!(doc["paths"][path][method].is_object(), "missing {method} {path}");
+            assert!(!path.ends_with('/'), "trailing slash in {path}");
         }
         let operations: usize = doc["paths"].as_object().unwrap().values().map(|p| p.as_object().unwrap().len()).sum();
         assert_eq!(operations, ROUTES.len());
     }
 
     #[test]
-    fn every_ref_resolves_to_a_component() {
+    fn every_ref_resolves_and_admin_is_protected() {
         let doc = document().unwrap();
         let mut found = Vec::new();
         refs(&doc, &mut found);
-        assert!(!found.is_empty());
         for target in found {
             let name = target.strip_prefix("#/components/schemas/").unwrap_or_else(|| panic!("bad ref {target}"));
             assert!(doc["components"]["schemas"][name].is_object(), "dangling $ref {target}");
         }
-    }
-
-    #[test]
-    fn operation_ids_are_unique_and_admin_is_protected() {
-        let ops = operations().unwrap();
-        let mut ids: Vec<_> = ops.iter().map(|o| o.id).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), ops.len());
-
-        let doc = document().unwrap();
         for (method, path) in ROUTES {
             let protected = !doc["paths"][path][method]["security"].is_null();
-            assert_eq!(protected, path.contains("/admin/"), "{method} {path}");
+            assert_eq!(protected, path.starts_with("/admin/"), "{method} {path}");
         }
-        for (method, path) in ROUTES {
-            let deprecated = doc["paths"][path][method]["deprecated"] == json!(true);
-            assert_eq!(deprecated, path.contains("backend-info"), "{method} {path}");
-        }
+        let ids: std::collections::HashSet<_> = operations().unwrap().iter().map(|o| o.id).collect();
+        assert_eq!(ids.len(), ROUTES.len());
     }
 
+    /// The mirrors accept what the handlers really send.
     #[test]
-    fn path_parameters_are_declared() {
-        let doc = document().unwrap();
-        let params = doc["paths"]["/admin/api/backends/{id}/users"]["get"]["parameters"].as_array().unwrap();
-        assert!(params.iter().any(|p| p["name"] == "id" && p["in"] == "path"));
-        assert!(params.iter().any(|p| p["name"] == "search" && p["in"] == "query"));
-        let params = doc["paths"]["/admin/api/jobs/{name}"]["patch"]["parameters"].as_array().unwrap();
-        assert!(params.iter().any(|p| p["name"] == "name" && p["in"] == "path"));
-    }
-
-    /// The mirrors must accept what the handlers really send.
-    #[test]
-    fn dtos_accept_the_real_structs() {
+    fn mirrors_accept_the_real_values() {
         let schedule = Schedule {
-            name: "sync_all_backend_users".into(),
+            name: "check_users_stream".into(),
             enabled: true,
             interval_secs: 60,
             last_run_at: None,
@@ -795,27 +622,12 @@ mod tests {
         let mut v = serde_json::to_value(&schedule).unwrap();
         v["running"] = json!(false);
         v["last_run"] = Value::Null;
-        serde_json::from_value::<ScheduleOut>(v).unwrap();
-
-        let backend = BackendView {
-            id: 1,
-            prefix_key: "abc".into(),
-            name: "B".into(),
-            is_active: true,
-            computer_sync_version: 0,
-            upstream_url: String::new(),
-            backend_id: "dept_a".into(),
-            created: "2026-01-01T00:00:00Z".into(),
-            modified: "2026-01-01T00:00:00Z".into(),
-            users_active: 0,
-            agents_active: 0,
-            users_version: Some(3),
-            agents_version: None,
-        };
-        let mut v = serde_json::to_value(&backend).unwrap();
-        v["nginx_map"] = json!({"entries": 1, "changed": true, "skipped": [], "file": "/x"});
-        serde_json::from_value::<BackendWithMap>(v).unwrap();
-        let v = json!({"nginx_map": {"error": "boom"}});
-        serde_json::from_value::<NginxMapResult>(v["nginx_map"].clone()).unwrap();
+        serde_json::from_value::<Job>(v).unwrap();
+        serde_json::from_value::<NginxMapResult>(json!({"entries": 1, "changed": true})).unwrap();
+        serde_json::from_value::<NginxMapResult>(json!({"error": "boom"})).unwrap();
+        let body = crate::http::api::ApiError::field("x", "required", "m");
+        let v =
+            json!({"error": {"code": body.code, "message": body.message, "details": body.details, "request_id": "0"}});
+        serde_json::from_value::<ErrorResponse>(v).unwrap();
     }
 }

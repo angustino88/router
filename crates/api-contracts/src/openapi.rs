@@ -26,8 +26,7 @@ pub(crate) fn response_object(status: u16, schema: &SchemaDef) -> Value {
     }
 }
 
-/// Expand the properties of an object schema into OpenAPI `in: query` parameters
-/// (what drf-spectacular does when a serializer is passed as `parameters`).
+/// Expand the properties of an object schema into OpenAPI `in: query` parameters.
 pub(crate) fn query_parameters(schema: &SchemaDef) -> Result<Vec<Value>> {
     let SchemaRef::Component(name) = &schema.root else {
         return Err(ContractError::type_err("query schema must be an object type"));

@@ -1,5 +1,10 @@
-//! Request parsing and error bodies. The shapes are those of the original service, so existing clients of the
-//! old service keep working: `{"detail": "..."}` and `{"<field>": ["..."]}`.
+//! Response envelope and request parsing, following the backend's API response standard:
+//!
+//! * success: `{"data": ...}` (plus `"meta"` where documented), `204` without a body for deletes;
+//! * error: `{"error": {"code", "message", "details": [{"field", "code", "message"}], "request_id"}}`.
+//!
+//! `request_id` is filled in by [`super::middleware::envelope_errors`], which also turns errors produced
+//! outside the handlers (unknown route, wrong method, body too large, timeout) into the same envelope.
 
 use axum::{
     body::Bytes,
@@ -7,143 +12,232 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 
-/// `{"detail": message}` with `status`.
-pub fn detail(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, Json(json!({ "detail": message.into() }))).into_response()
+/// `{"data": value}` with `status`.
+pub fn data(status: StatusCode, value: impl Serialize) -> Response {
+    (status, Json(json!({ "data": value }))).into_response()
 }
 
-/// `400 {"<field>": [message]}`.
-pub fn field_error(field: &str, message: impl Into<String>) -> Response {
-    let mut m = Map::new();
-    m.insert(field.to_string(), json!([message.into()]));
-    (StatusCode::BAD_REQUEST, Json(Value::Object(m))).into_response()
+/// `{"data": value, "meta": meta}` with `status`.
+pub fn data_with_meta(status: StatusCode, value: impl Serialize, meta: Value) -> Response {
+    (status, Json(json!({ "data": value, "meta": meta }))).into_response()
 }
 
-/// 500 with a generic text; the cause goes to the log only.
-pub fn server_error(e: impl std::fmt::Display) -> Response {
-    tracing::error!("internal error: {e}");
-    detail(StatusCode::INTERNAL_SERVER_ERROR, "A server error occurred.")
+/// `204 No Content`.
+pub fn no_content() -> Response {
+    StatusCode::NO_CONTENT.into_response()
 }
 
-/// Request body as an object: JSON (`application/json`) or a form (`application/x-www-form-urlencoded`).
-/// An empty body is an empty object. Other content types give 415, malformed JSON gives 400.
-pub fn request_data(headers: &HeaderMap, body: &Bytes) -> Result<Map<String, Value>, Response> {
-    if body.iter().all(u8::is_ascii_whitespace) {
+/// One entry of `error.details`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Detail {
+    pub field: String,
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// An error response.
+#[derive(Debug, Clone)]
+pub struct ApiError {
+    pub status: StatusCode,
+    pub code: &'static str,
+    pub message: String,
+    pub details: Vec<Detail>,
+}
+
+pub type ApiResult = Result<Response, ApiError>;
+
+impl ApiError {
+    pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> ApiError {
+        ApiError { status, code, message: message.into(), details: Vec::new() }
+    }
+
+    /// `400 validation_failed` for one field.
+    pub fn field(field: &str, code: &'static str, message: impl Into<String>) -> ApiError {
+        ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "validation_failed",
+            message: "One or more fields are invalid.".into(),
+            details: vec![Detail { field: field.into(), code, message: message.into() }],
+        }
+    }
+
+    pub fn not_found() -> ApiError {
+        ApiError::new(StatusCode::NOT_FOUND, "not_found", "Not found.")
+    }
+
+    /// `500`; the cause goes to the log only.
+    pub fn internal(e: impl std::fmt::Display) -> ApiError {
+        tracing::error!("internal error: {e}");
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "An internal error occurred.")
+    }
+}
+
+impl From<sqlx::Error> for ApiError {
+    fn from(e: sqlx::Error) -> Self {
+        ApiError::internal(e)
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let body = json!({"error": {
+            "code": self.code,
+            "message": self.message,
+            "details": self.details,
+            "request_id": "",
+        }});
+        (self.status, Json(body)).into_response()
+    }
+}
+
+/// Default error `code` for a status produced outside the handlers.
+pub fn code_for(status: StatusCode) -> &'static str {
+    match status.as_u16() {
+        400 => "bad_request",
+        401 => "unauthorized",
+        403 => "forbidden",
+        404 => "not_found",
+        405 => "method_not_allowed",
+        408 => "request_timeout",
+        409 => "conflict",
+        413 => "payload_too_large",
+        415 => "unsupported_media_type",
+        429 => "rate_limited",
+        503 => "unavailable",
+        s if s >= 500 => "internal_error",
+        _ => "bad_request",
+    }
+}
+
+/// Request body as a JSON object. The body must be `application/json`; an empty body is an empty object.
+pub fn json_body(headers: &HeaderMap, body: &Bytes) -> Result<Map<String, Value>, ApiError> {
+    if body.is_empty() {
         return Ok(Map::new());
     }
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    match content_type.as_str() {
-        "application/json" | "" => match serde_json::from_slice::<Value>(body) {
-            Ok(Value::Object(m)) => Ok(m),
-            Ok(_) => Err(detail(StatusCode::BAD_REQUEST, "Invalid data. Expected a dictionary.")),
-            Err(e) => Err(detail(StatusCode::BAD_REQUEST, format!("JSON parse error - {e}"))),
-        },
-        "application/x-www-form-urlencoded" => {
-            let mut m = Map::new();
-            for (k, v) in form_urlencoded_pairs(body) {
-                m.insert(k, Value::String(v));
-            }
-            Ok(m)
-        }
-        other => {
-            Err(detail(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("Unsupported media type \"{other}\" in request.")))
+    let content_type = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let mime = content_type.split(';').next().unwrap_or("").trim();
+    if !mime.eq_ignore_ascii_case("application/json") {
+        return Err(ApiError::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            "Send the body as application/json.",
+        ));
+    }
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(m)) => Ok(m),
+        Ok(_) => Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_json", "The body must be a JSON object.")),
+        Err(e) => {
+            Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_json", format!("The body is not valid JSON: {e}")))
         }
     }
 }
 
-/// Minimal `application/x-www-form-urlencoded` decoder (last value of a repeated key wins).
-fn form_urlencoded_pairs(body: &[u8]) -> Vec<(String, String)> {
-    fn decode(s: &str) -> String {
-        let bytes = s.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'+' => out.push(b' '),
-                b'%' if i + 2 < bytes.len() => {
-                    match u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("zz"), 16) {
-                        Ok(b) => {
-                            out.push(b);
-                            i += 2;
-                        }
-                        Err(_) => out.push(b'%'),
-                    }
-                }
-                b => out.push(b),
-            }
-            i += 1;
-        }
-        String::from_utf8_lossy(&out).into_owned()
-    }
-    String::from_utf8_lossy(body)
-        .split('&')
-        .filter(|p| !p.is_empty())
-        .map(|p| match p.split_once('=') {
-            Some((k, v)) => (decode(k), decode(v)),
-            None => (decode(p), String::new()),
-        })
-        .collect()
+/// Typed access to the fields of a request object. Unknown fields are rejected by [`Fields::finish`].
+pub struct Fields<'a> {
+    map: &'a Map<String, Value>,
+    seen: Vec<&'a str>,
 }
 
-/// Required string field (trimmed): missing/null, blank and non-scalar values are field errors.
-pub fn char_field(data: &Map<String, Value>, name: &str) -> Result<String, Response> {
-    let raw = match data.get(name) {
-        None => return Err(field_error(name, "This field is required.")),
-        Some(Value::Null) => return Err(field_error(name, "This field may not be null.")),
-        Some(Value::String(s)) => s.trim().to_string(),
-        Some(Value::Number(n)) => n.to_string(),
-        Some(_) => return Err(field_error(name, "Not a valid string.")),
-    };
-    if raw.is_empty() {
-        return Err(field_error(name, "This field may not be blank."));
+impl<'a> Fields<'a> {
+    pub fn new(map: &'a Map<String, Value>) -> Fields<'a> {
+        Fields { map, seen: Vec::new() }
     }
-    Ok(raw)
+
+    fn get(&mut self, name: &'a str) -> Option<&'a Value> {
+        self.seen.push(name);
+        match self.map.get(name) {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v),
+        }
+    }
+
+    /// Optional string, trimmed.
+    pub fn string(&mut self, name: &'a str) -> Result<Option<String>, ApiError> {
+        match self.get(name) {
+            None => Ok(None),
+            Some(Value::String(s)) => Ok(Some(s.trim().to_string())),
+            Some(_) => Err(ApiError::field(name, "invalid_type", "Must be a string.")),
+        }
+    }
+
+    /// Required, non-blank string, trimmed.
+    pub fn required_string(&mut self, name: &'a str) -> Result<String, ApiError> {
+        match self.string(name)? {
+            None => Err(ApiError::field(name, "required", "This field is required.")),
+            Some(s) if s.is_empty() => Err(ApiError::field(name, "blank", "This field may not be blank.")),
+            Some(s) => Ok(s),
+        }
+    }
+
+    pub fn boolean(&mut self, name: &'a str) -> Result<Option<bool>, ApiError> {
+        match self.get(name) {
+            None => Ok(None),
+            Some(Value::Bool(b)) => Ok(Some(*b)),
+            Some(_) => Err(ApiError::field(name, "invalid_type", "Must be true or false.")),
+        }
+    }
+
+    pub fn integer(&mut self, name: &'a str, min: i64, max: i64) -> Result<Option<i64>, ApiError> {
+        match self.get(name) {
+            None => Ok(None),
+            Some(Value::Number(n)) => match n.as_i64() {
+                Some(v) if (min..=max).contains(&v) => Ok(Some(v)),
+                Some(_) => Err(ApiError::field(name, "out_of_range", format!("Must be between {min} and {max}."))),
+                None => Err(ApiError::field(name, "invalid_type", "Must be an integer.")),
+            },
+            Some(_) => Err(ApiError::field(name, "invalid_type", "Must be an integer.")),
+        }
+    }
+
+    /// Fails on any field that was not read.
+    pub fn finish(self) -> Result<(), ApiError> {
+        match self.map.keys().find(|k| !self.seen.contains(&k.as_str())) {
+            Some(k) => Err(ApiError::field(k, "unknown_field", "Unknown field.")),
+            None => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::to_bytes, http::HeaderValue};
-
-    async fn body(r: Response) -> (StatusCode, Value) {
-        let status = r.status();
-        (status, serde_json::from_slice(&to_bytes(r.into_body(), usize::MAX).await.unwrap()).unwrap())
-    }
+    use axum::http::HeaderValue;
 
     fn json_headers() -> HeaderMap {
         let mut h = HeaderMap::new();
-        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
         h
     }
 
-    #[tokio::test]
-    async fn parsing() {
-        let d = request_data(&json_headers(), &Bytes::from_static(b"{\"a\": \" x \"}")).unwrap();
-        assert_eq!(char_field(&d, "a").unwrap(), "x");
-        let (s, b) = body(char_field(&d, "b").unwrap_err()).await;
-        assert_eq!((s, b), (StatusCode::BAD_REQUEST, json!({"b": ["This field is required."]})));
-        let (s, _) = body(request_data(&json_headers(), &Bytes::from_static(b"{bad")).unwrap_err()).await;
-        assert_eq!(s, StatusCode::BAD_REQUEST);
+    #[test]
+    fn parsing_and_fields() {
+        let m = json_body(&json_headers(), &Bytes::from_static(br#"{"a": " x ", "n": 7, "b": true}"#)).unwrap();
+        let mut f = Fields::new(&m);
+        assert_eq!(f.required_string("a").unwrap(), "x");
+        assert_eq!(f.integer("n", 0, 10).unwrap(), Some(7));
+        assert_eq!(f.boolean("b").unwrap(), Some(true));
+        assert!(f.finish().is_ok());
 
-        let mut form = HeaderMap::new();
-        form.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-www-form-urlencoded; charset=utf-8"));
-        let d = request_data(&form, &Bytes::from_static(b"agent_id=a%2Fb+c&x=")).unwrap();
-        assert_eq!(d["agent_id"], "a/b c");
+        let mut f = Fields::new(&m);
+        f.string("a").unwrap();
+        let e = f.finish().unwrap_err();
+        assert_eq!((e.code, e.details[0].code), ("validation_failed", "unknown_field"));
 
-        let mut xml = HeaderMap::new();
-        xml.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/xml"));
-        let (s, _) = body(request_data(&xml, &Bytes::from_static(b"<a/>")).unwrap_err()).await;
-        assert_eq!(s, StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(request_data(&xml, &Bytes::new()).unwrap().is_empty());
+        let e = Fields::new(&m).required_string("missing").unwrap_err();
+        assert_eq!(
+            e.details[0],
+            Detail { field: "missing".into(), code: "required", message: "This field is required.".into() }
+        );
+        assert_eq!(Fields::new(&m).integer("n", 8, 9).unwrap_err().details[0].code, "out_of_range");
+
+        assert_eq!(json_body(&json_headers(), &Bytes::from_static(b"[1]")).unwrap_err().code, "invalid_json");
+        assert_eq!(
+            json_body(&HeaderMap::new(), &Bytes::from_static(b"a=1")).unwrap_err().status,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE
+        );
+        assert!(json_body(&HeaderMap::new(), &Bytes::new()).unwrap().is_empty());
     }
 }

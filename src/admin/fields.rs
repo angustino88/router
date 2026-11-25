@@ -1,57 +1,4 @@
-//! Parsing and validation of admin request fields. Errors use the field-error shape `{"<field>": ["..."]}`.
-
-use axum::{body::Bytes, http::HeaderMap, response::Response};
-use serde_json::{Map, Value};
-
-use crate::{
-    http::api::{field_error, request_data},
-    state::AppState,
-};
-
-/// Body of an admin request after the credentials were checked.
-pub async fn authorized_body(s: &AppState, headers: &HeaderMap, body: &Bytes) -> Result<Map<String, Value>, Response> {
-    let data = request_data(headers, body)?;
-    super::auth::authorize(s, headers, Some(&data)).await?;
-    Ok(data)
-}
-
-pub fn optional_bool(data: &Map<String, Value>, name: &str) -> Result<Option<bool>, Response> {
-    match data.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Bool(b)) => Ok(Some(*b)),
-        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "on" | "yes" => Ok(Some(true)),
-            "false" | "0" | "off" | "no" => Ok(Some(false)),
-            _ => Err(field_error(name, "Must be a valid boolean.")),
-        },
-        Some(_) => Err(field_error(name, "Must be a valid boolean.")),
-    }
-}
-
-pub fn optional_int(data: &Map<String, Value>, name: &str, min: i64, max: i64) -> Result<Option<i64>, Response> {
-    let v = match data.get(name) {
-        None | Some(Value::Null) => return Ok(None),
-        Some(Value::Number(n)) => n.as_i64(),
-        Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
-        Some(_) => None,
-    };
-    let Some(v) = v else { return Err(field_error(name, "A valid integer is required.")) };
-    if v < min {
-        return Err(field_error(name, format!("Ensure this value is greater than or equal to {min}.")));
-    }
-    if v > max {
-        return Err(field_error(name, format!("Ensure this value is less than or equal to {max}.")));
-    }
-    Ok(Some(v))
-}
-
-pub fn optional_string(data: &Map<String, Value>, name: &str) -> Result<Option<String>, Response> {
-    match data.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(s)) => Ok(Some(s.trim().to_string())),
-        Some(_) => Err(field_error(name, "Not a valid string.")),
-    }
-}
+//! Validation of admin fields.
 
 pub fn backend_name(raw: &str) -> Result<String, String> {
     let name = raw.trim();
@@ -59,7 +6,7 @@ pub fn backend_name(raw: &str) -> Result<String, String> {
         return Err("This field may not be blank.".into());
     }
     if name.chars().count() > 255 {
-        return Err("Ensure this field has no more than 255 characters.".into());
+        return Err("At most 255 characters.".into());
     }
     Ok(name.to_string())
 }
@@ -81,7 +28,7 @@ pub fn upstream_url(raw: &str) -> Result<String, String> {
         return Ok(String::new());
     }
     if url.len() > 255 {
-        return Err("Ensure this field has no more than 255 characters.".into());
+        return Err("At most 255 characters.".into());
     }
     let rest = url
         .strip_prefix("http://")

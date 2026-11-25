@@ -1,15 +1,14 @@
 use std::fmt;
 
-/// Error type of the crate. The variants mirror the Python exceptions used by
-/// `drf-api-contracts` so behaviour stays easy to compare.
+/// Error type of the crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractError {
-    /// Python `ValueError`: an argument has an invalid value.
+    /// An argument has an invalid value.
     Value(String),
-    /// Python `TypeError`: the API was used in the wrong way
+    /// The API was used in the wrong way
     /// (e.g. `respond()` on a paginated contract).
     Type(String),
-    /// DRF `ValidationError`: payload did not match the declared schema type.
+    /// The payload did not match the declared schema type.
     Validation(String),
 }
 

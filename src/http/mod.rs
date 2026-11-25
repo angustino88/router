@@ -1,26 +1,24 @@
-//! HTTP server assembly: feature routers, health probes, metrics, the OpenAPI document and the middleware stack.
+//! HTTP server assembly: feature routers, health probes, metrics, the OpenAPI document and the middleware stack
+//! (request id, access log, error envelope, timeout, body limit, `nosniff`, `no-store`).
 
 pub mod api;
+pub mod middleware;
 
 use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, Request, StatusCode},
+    middleware::from_fn,
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
-use tower_http::{
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    set_header::SetResponseHeaderLayer,
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
-};
+use tower_http::{set_header::SetResponseHeaderLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 use crate::{
     admin,
-    db::{mappings, Kind},
+    db::{claims, Kind},
     metrics::{self, Gauge},
     openapi, routing,
     state::AppState,
@@ -55,11 +53,11 @@ async fn metrics_text(State(s): State<Arc<AppState>>) -> Response {
             "1 when this replica runs the stream sync.",
             s.leadership.is_leader() as u8 as f64,
         ),
-        Gauge::single("router_sync_enabled", "1 when SYNC_ENABLED is on.", s.scheduler_enabled as u8 as f64),
+        Gauge::single("router_sync_enabled", "1 when SYNC_ENABLED is on.", s.sync_enabled as u8 as f64),
     ];
     let counts: Result<(i64, i64), _> = sqlx::query_as(
         "SELECT count(*) FILTER (WHERE is_active), count(*) FILTER (WHERE is_active AND upstream_url <> '')
-           FROM tenant_backend",
+           FROM backend",
     )
     .fetch_one(&s.pool)
     .await;
@@ -70,7 +68,7 @@ async fn metrics_text(State(s): State<Arc<AppState>>) -> Response {
     let mut conflicts =
         Gauge { name: "router_conflicting_keys", help: "Keys claimed by several backends.", samples: vec![] };
     for kind in [Kind::Users, Kind::Agents] {
-        if let Ok((n, _)) = mappings::conflicts(&s.pool, kind, 0).await {
+        if let Ok((n, _)) = claims::conflicts(&s.pool, kind, 0).await {
             conflicts.samples.push((metrics::labels(&[("entity", kind.entity())]), n as f64));
         }
     }
@@ -78,25 +76,22 @@ async fn metrics_text(State(s): State<Arc<AppState>>) -> Response {
     ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], metrics::render(&gauges)).into_response()
 }
 
-/// `GET /openapi.json` (admin credentials required).
+/// `GET /openapi.json`: the OpenAPI document itself, not wrapped in the envelope (admin credentials required).
 async fn openapi_json(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Err(r) = admin::auth::authorize(&s, &headers, None).await {
-        return r;
-    }
-    match openapi::document() {
-        Ok(doc) => Json(doc).into_response(),
-        Err(e) => api::server_error(e),
-    }
+    admin::auth::guarded(&s, &headers, || async {
+        Ok(Json(openapi::document().map_err(api::ApiError::internal)?).into_response())
+    })
+    .await
 }
 
-async fn not_found() -> Response {
-    api::detail(StatusCode::NOT_FOUND, "Not found.")
+async fn not_found() -> api::ApiError {
+    api::ApiError::not_found()
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
     // Logs method, path (never the query string or body: they can carry tokens) and the request id.
     let trace = TraceLayer::new_for_http().make_span_with(|req: &Request<_>| {
-        let id = req.headers().get("x-request-id").and_then(|v| v.to_str().ok()).unwrap_or("-");
+        let id = req.headers().get(middleware::REQUEST_ID).and_then(|v| v.to_str().ok()).unwrap_or("-");
         tracing::info_span!("http", method = %req.method(), path = %req.uri().path(), request_id = %id)
     });
     Router::new()
@@ -109,12 +104,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT))
-        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(from_fn(middleware::envelope_errors))
         .layer(trace)
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
         ))
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
+        .layer(from_fn(middleware::request_id))
         .with_state(state)
 }

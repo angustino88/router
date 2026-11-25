@@ -9,7 +9,7 @@ use crate::openapi::{query_parameters, response_object, OperationDoc};
 use crate::response::{validator_for, ContractResponse, ProblemArgs, ResponseContract, Validator};
 use crate::schema::{merge_components, Components, SchemaDef};
 
-/// Python `str.isidentifier()` (good enough for response names).
+/// Identifier check for response names: a letter or `_`, then letters, digits or `_`.
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
@@ -58,7 +58,7 @@ impl ResponseSet {
         Ok(())
     }
 
-    /// Python `__getattr__`: look up an alternate or problem by name.
+    /// Look up an alternate or problem by name.
     pub fn find(&self, name: &str) -> Option<&ResponseContract> {
         self.alternates.iter().chain(self.problems.iter()).find(|(n, _)| n == name).map(|(_, c)| c)
     }
@@ -122,7 +122,7 @@ impl std::fmt::Debug for OperationContract {
     }
 }
 
-/// Builder replacing the Python keyword-argument constructor.
+/// Builder of an [`OperationContract`].
 pub struct OperationBuilder {
     success: Option<ResponseContract>,
     response_set: Option<ResponseSet>,
@@ -257,8 +257,7 @@ impl OperationContract {
 
     // ---- OpenAPI ------------------------------------------------------------------
 
-    /// OpenAPI operation object + the components it needs
-    /// (Python: the `extend_schema(...)` decorator).
+    /// OpenAPI operation object + the components it needs.
     pub fn schema(&self) -> Result<OperationDoc> {
         self.schema_with(Map::new())
     }

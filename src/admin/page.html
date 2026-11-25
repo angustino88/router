@@ -140,7 +140,7 @@
 
       <div class="panel hidden" id="map-panel">
         <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
-          <h2 style="margin:0">Mappings of <span id="m-title"></span></h2>
+          <h2 style="margin:0">Claims of <span id="m-title"></span></h2>
           <button class="btn" id="map-close">Close</button>
         </div>
         <div class="row" style="margin-bottom:10px">
@@ -148,13 +148,10 @@
             <select id="m-kind"><option value="users">User</option><option value="agents">Agent</option></select>
           </label>
           <label style="flex:1 1 200px">Search <input type="search" id="m-search" placeholder="key / agent UUID"></label>
-          <label>Status
-            <select id="m-active"><option value="">All</option><option value="true">Active</option><option value="false">Inactive</option></select>
-          </label>
         </div>
         <div class="muted" id="m-count"></div>
         <div class="table-wrap"><table><thead id="m-head"></thead><tbody id="m-body"></tbody></table></div>
-        <div class="hint">Mappings are read-only: they are written by the sync from each backend.</div>
+        <div class="hint">Claims are read-only: they are written by the sync from each backend.</div>
       </div>
     </section>
 
@@ -165,12 +162,12 @@
           <h2 style="margin:0">Nginx status</h2>
           <div class="actions">
             <button class="btn" id="reload-nginx-view">Refresh</button>
-            <button class="btn primary" id="force-reload">Force reload nginx</button>
+            <button class="btn primary" id="force-reload">Reload nginx</button>
           </div>
         </div>
         <div id="nginx-status" style="margin-top:10px"></div>
-        <div class="hint">The map file is regenerated from the database right after a backend is created/edited/deleted, on the <code>render_nginx_map</code>
-          schedule ("Schedules" tab) and on Force. Nginx tests itself (<code>nginx -t</code>) and reloads when the file changes.</div>
+        <div class="hint">The map is rewritten from the registry right after a backend is created, edited or deleted, by the
+          <code>write_nginx_map</code> job ("Jobs" tab) and by Reload. nginx tests the configuration (<code>nginx -t</code>) and reloads when the map changes.</div>
       </div>
       <div class="panel hidden" id="nginx-problems-panel">
         <h2 class="warn">Needs attention</h2>
@@ -180,7 +177,7 @@
         <h2>Routing table <span class="muted" style="font-weight:400" id="nginx-files"></span></h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>prefix_key</th><th>Target</th><th>Source</th></tr></thead>
+            <thead><tr><th>prefix_key</th><th>Backend URL</th></tr></thead>
             <tbody id="nginx-body"></tbody>
           </table>
         </div>
@@ -208,19 +205,18 @@
         </div>
       </div>
       <div class="panel">
-        <h2>Conflicts <span class="muted" style="font-weight:400" id="conflict-policy"></span></h2>
+        <h2>Conflicts</h2>
         <div id="conflicts"></div>
-        <div class="hint">A key claimed by more than one active backend is a conflict. With the <code>reject</code> policy the routing API
-          answers 409 for it, so the user or agent is never sent to the wrong department. Fix the assignment on the backends; the
-          sync removes the conflict automatically.</div>
+        <div class="hint">A key claimed by more than one active backend is a conflict: the routing API answers 409 for it, so the user
+          or agent is never sent to the wrong department. Fix the assignment on the backends; the sync removes the conflict.</div>
       </div>
     </section>
 
     <!-- ======================= Schedules ======================= -->
     <section id="tab-schedules" class="hidden">
       <div class="panel hidden" id="sched-off">
-        <span class="warn">The scheduler is off (SYNC_ENABLED=false in .env).</span>
-        Schedules do not run on their own, but "Run now" still works.
+        <span class="warn">The scheduler is off (SYNC_ENABLED=false).</span>
+        Jobs do not run on their own, but "Run now" still works.
       </div>
       <div class="grid2" id="sched-list"></div>
     </section>
@@ -229,19 +225,19 @@
     <section id="tab-runs" class="hidden">
       <div class="panel">
         <div class="row" style="margin-bottom:10px">
-          <label>Task
-            <select id="r-task">
+          <label>Job
+            <select id="r-job">
               <option value="">All</option>
-              <option value="sync_all_backend_users">sync_all_backend_users</option>
-              <option value="sync_all_backend_agents">sync_all_backend_agents</option>
-              <option value="render_nginx_map">render_nginx_map</option>
+              <option value="check_users_stream">check_users_stream</option>
+              <option value="check_agents_stream">check_agents_stream</option>
+              <option value="write_nginx_map">write_nginx_map</option>
             </select>
           </label>
           <button class="btn" id="reload-runs">Refresh</button>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>ID</th><th>Task</th><th>Trigger</th><th>Status</th><th>Started (UTC)</th>
+            <thead><tr><th>ID</th><th>Job</th><th>Trigger</th><th>Status</th><th>Started (UTC)</th>
               <th class="num">Duration</th><th>Result</th></tr></thead>
             <tbody id="runs-body"></tbody>
           </table>
@@ -258,10 +254,10 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const TASK_LABEL = {
-    sync_all_backend_users: "Check user stream (sync_all_backend_users)",
-    sync_all_backend_agents: "Check agent stream (sync_all_backend_agents)",
-    render_nginx_map: "Generate nginx map (render_nginx_map)",
+  const JOB_LABEL = {
+    check_users_stream: "Check the users streams (check_users_stream)",
+    check_agents_stream: "Check the agents streams (check_agents_stream)",
+    write_nginx_map: "Write the nginx map (write_nginx_map)",
   };
 
   // ---- credentials: kept in memory; sessionStorage only as a convenience for reloads.
@@ -280,24 +276,24 @@
     msgTimer = setTimeout(() => (el.style.display = "none"), isErr ? 7000 : 3000);
   }
 
+  // `{"error": {code, message, details: [{field, message}], request_id}}` -> one line of text.
   function errorText(body, status) {
-    if (!body || typeof body !== "object") return "Error " + status;
-    if (body.detail) return body.detail;
-    return Object.entries(body).map(([k, v]) => k + ": " + (Array.isArray(v) ? v.join(" ") : v)).join("; ");
+    const e = body && body.error;
+    if (!e) return "Error " + status;
+    const details = (e.details || []).map((d) => (d.field ? d.field + ": " : "") + d.message).join("; ");
+    return details ? `${e.message} ${details}` : e.message;
   }
 
+  // Returns `{data, meta}` of the envelope (`{}` for 204).
   async function api(method, path, data) {
-    const opts = { method, headers: { Authorization: auth || "" } };
+    const opts = { method, headers: { Authorization: auth || "", "X-Requested-With": "fetch" } };
     if (data !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(data); }
     const res = await fetch(path, opts);
     let body = null;
-    try { body = await res.json(); } catch (e) {}
-    if (res.status === 401 || res.status === 503) {
-      if (res.status === 401) { saveAuth(null); showLogin(); }
-      throw new Error(errorText(body, res.status));
-    }
+    if (res.status !== 204) { try { body = await res.json(); } catch (e) {} }
+    if (res.status === 401) { saveAuth(null); showLogin(); }
     if (!res.ok) throw new Error(errorText(body, res.status));
-    return body;
+    return body || {};
   }
 
   // ---- views
@@ -313,9 +309,9 @@
     const u = $("login-user").value, p = $("login-pass").value;
     saveAuth(basic(u, p));
     try {
-      const r = await api("POST", "/admin/api/login");
+      const { data } = await api("GET", "/admin/api/session");
       $("login-pass").value = "";
-      showApp(r.username);
+      showApp(data.username);
     } catch (err) { saveAuth(null); toast(err.message, true); }
   });
   $("logout").addEventListener("click", () => { saveAuth(null); showLogin(); });
@@ -335,13 +331,10 @@
   }
 
   // ---- backends
-  let backends = [], gitTargets = {};
+  let backends = [];
   async function loadBackends() {
     try {
-      const [b, n] = await Promise.all([api("GET", "/admin/api/backends"), api("GET", "/admin/api/nginx")]);
-      backends = b.backends;
-      gitTargets = {};
-      n.entries.filter((e) => e.source === "git").forEach((e) => (gitTargets[e.prefix_key] = e.target));
+      backends = (await api("GET", "/admin/api/backends")).data;
       renderBackends();
     } catch (err) { toast(err.message, true); }
   }
@@ -356,23 +349,22 @@
         <td class="mono">${b.backend_id ? esc(b.backend_id) : '<span class="muted">not set</span>'}</td>
         <td>${urlCell(b)}</td>
         <td>${b.is_active ? '<span class="ok">● active</span>' : '<span class="muted">○ inactive</span>'}</td>
-        <td class="num">${b.users_active} <span class="muted">(${b.users_version ?? "–"})</span></td>
-        <td class="num">${b.agents_active} <span class="muted">(${b.agents_version ?? "–"})</span></td>
-        <td class="muted">${esc(b.modified.replace("T", " ").replace("Z", ""))}</td>
+        <td class="num">${b.user_claims} <span class="muted">(${b.users_version ?? "–"})</span></td>
+        <td class="num">${b.agent_claims} <span class="muted">(${b.agents_version ?? "–"})</span></td>
+        <td class="muted">${esc(fmtTime(b.updated_at))}</td>
         <td><div class="actions">
           <button class="btn" data-act="edit" data-id="${b.id}">Edit</button>
-          <button class="btn" data-act="map" data-id="${b.id}">Mapping</button>
+          <button class="btn" data-act="map" data-id="${b.id}">Claims</button>
           <button class="btn danger" data-act="del" data-id="${b.id}">Delete</button>
         </div></td>
       </tr>`).join("");
   }
   function urlCell(b) {
-    if (gitTargets[b.prefix_key]) return `<span class="mono">${esc(gitTargets[b.prefix_key])}</span> <span class="chip">backends.map</span>`;
     if (b.upstream_url) return `<span class="mono">${esc(b.upstream_url)}</span>` + (b.is_active ? "" : ' <span class="chip muted">not routed (inactive)</span>');
     return '<span class="warn">not set – nginx returns 404</span>';
   }
   function mapResult(r) {
-    const m = r && r.nginx_map;
+    const m = r && r.meta && r.meta.nginx_map;
     if (!m) return "";
     if (m.error) { toast("Saved to the database, but the nginx map could not be generated: " + m.error, true); return null; }
     return m.changed ? " – nginx will reload in a few seconds" : "";
@@ -384,22 +376,22 @@
     const b = backends.find((x) => x.id === Number(btn.dataset.id));
     if (!b) return;
     if (btn.dataset.act === "edit") openEdit(b);
-    if (btn.dataset.act === "map") openMappings(b);
+    if (btn.dataset.act === "map") openClaims(b);
     if (btn.dataset.act === "del") deleteBackend(b);
   });
 
   $("create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      const b = await api("POST", "/admin/api/backends", {
+      const r = await api("POST", "/admin/api/backends", {
         name: $("c-name").value,
         upstream_url: $("c-url").value,
         backend_id: $("c-bid").value,
         is_active: $("c-active").checked,
       });
       $("c-name").value = ""; $("c-url").value = ""; $("c-bid").value = "";
-      const extra = mapResult(b);
-      if (extra !== null) toast(`Created "${b.name}" – prefix_key: ${b.prefix_key}${extra}`);
+      const extra = mapResult(r);
+      if (extra !== null) toast(`Created "${r.data.name}" – prefix_key: ${r.data.prefix_key}${extra}`);
       loadBackends();
     } catch (err) { toast(err.message, true); }
   });
@@ -429,60 +421,56 @@
 
   async function deleteBackend(b) {
     const text = `Delete backend "${b.name}" (${b.prefix_key})?\n` +
-      `All user/agent mappings of this backend are deleted too (active: ${b.users_active} users, ${b.agents_active} agents).\n\n` +
+      `Its claims are deleted too (${b.user_claims} users, ${b.agent_claims} agents).\n\n` +
       `Type the prefix_key to confirm:`;
     const typed = window.prompt(text);
     if (typed === null) return;
     if (typed.trim() !== b.prefix_key) { toast("prefix_key does not match; nothing was deleted.", true); return; }
     try {
-      const r = await api("DELETE", "/admin/api/backends/" + b.id);
-      toast(`Backend deleted (${r.deleted.users} users, ${r.deleted.agents} agents)`);
+      await api("DELETE", "/admin/api/backends/" + b.id);
+      toast("Backend deleted");
       if ($("e-id").value === String(b.id)) $("edit-panel").classList.add("hidden");
       if (mapBackend && mapBackend.id === b.id) $("map-panel").classList.add("hidden");
       loadBackends();
     } catch (err) { toast(err.message, true); }
   }
 
-  // ---- mappings (read-only)
+  // ---- claims (read-only)
   let mapBackend = null, searchTimer = null;
-  function openMappings(b) {
+  function openClaims(b) {
     mapBackend = b;
     $("m-title").textContent = `${b.name} (${b.prefix_key})`;
     $("map-panel").classList.remove("hidden");
-    loadMappings();
+    loadClaims();
     $("map-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
   $("map-close").addEventListener("click", () => { $("map-panel").classList.add("hidden"); mapBackend = null; });
-  ["m-kind", "m-active"].forEach((id) => $(id).addEventListener("change", loadMappings));
-  $("m-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadMappings, 300); });
-  async function loadMappings() {
+  $("m-kind").addEventListener("change", loadClaims);
+  $("m-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadClaims, 300); });
+  async function loadClaims() {
     if (!mapBackend) return;
     const kind = $("m-kind").value;
-    const q = new URLSearchParams({ search: $("m-search").value, active: $("m-active").value, limit: "1000" });
+    const q = new URLSearchParams({ limit: "1000" });
+    if ($("m-search").value.trim()) q.set("search", $("m-search").value.trim());
     try {
-      const r = await api("GET", `/admin/api/backends/${mapBackend.id}/${kind}?` + q);
-      const [k, x, kl, xl] = kind === "users"
-        ? ["user_id", "display_name", "Key (entra:tenant:object)", "Display name (legacy)"]
-        : ["agent_id", "sku", "Agent UUID", "SKU (legacy)"];
-      $("m-head").innerHTML = `<tr><th>${kl}</th><th>${xl}</th><th>Status</th><th>Created (UTC)</th><th>Modified (UTC)</th></tr>`;
-      $("m-body").innerHTML = r.items.map((m) => `
-        <tr><td class="mono">${esc(m[k])}</td><td>${esc(m[x])}</td>
-        <td>${m.is_active ? '<span class="ok">active</span>' : '<span class="muted">inactive</span>'}</td>
-        <td class="muted">${esc(m.created.replace("T", " ").replace("Z", ""))}</td>
-        <td class="muted">${esc(m.modified.replace("T", " ").replace("Z", ""))}</td></tr>`).join("")
-        || '<tr><td colspan="5" class="muted">No data.</td></tr>';
-      $("m-count").textContent = r.total > r.count ? `Showing ${r.count} of ${r.total}` : `${r.total} rows`;
+      const { data, meta } = await api("GET", `/admin/api/backends/${mapBackend.id}/${kind}?` + q);
+      const label = kind === "users" ? "Key (entra:tenant:object)" : "Agent UUID";
+      $("m-head").innerHTML = `<tr><th>${label}</th><th>Claimed since (UTC)</th></tr>`;
+      $("m-body").innerHTML = data.map((m) => `
+        <tr><td class="mono">${esc(m.key)}</td><td class="muted">${esc(fmtTime(m.created_at))}</td></tr>`).join("")
+        || '<tr><td colspan="2" class="muted">No claims.</td></tr>';
+      $("m-count").textContent = meta.total > data.length ? `Showing ${data.length} of ${meta.total}` : `${meta.total} claims`;
     } catch (err) { toast(err.message, true); }
   }
 
   // ---- nginx
   async function loadNginx() {
     try {
-      const n = await api("GET", "/admin/api/nginx");
-      const st = n.nginx_status;
+      const n = (await api("GET", "/admin/api/nginx")).data;
+      const st = n.nginx;
       let html;
       if (!st) {
-        html = '<span class="warn">No status received from nginx yet.</span> Check that the nginx container runs <code>watch-maps.sh</code> and shares the <code>nginx_admin</code> volume.';
+        html = '<span class="warn">No status received from nginx yet.</span> Check that the nginx container runs <code>entrypoint.sh</code> and shares the <code>nginx_map</code> volume.';
       } else {
         const cls = st.ok ? "ok" : "bad";
         html = `<span class="${cls}">${st.ok ? "● OK" : "● ERROR"}</span> – ${esc(st.action || "")} at ${esc(fmtTime(st.time))} UTC` +
@@ -492,13 +480,12 @@
       $("nginx-status").innerHTML = html;
       $("nginx-problems-panel").classList.toggle("hidden", !n.problems.length);
       $("nginx-problems").innerHTML = n.problems.map((p) => `<li>${esc(p)}</li>`).join("");
-      $("nginx-files").textContent = `(generated from database: ${n.generated_file} · static file: ${n.git_file})`;
+      $("nginx-files").textContent = `(${n.map_file})`;
       const names = Object.fromEntries((backends || []).map((b) => [b.prefix_key, b.name]));
       $("nginx-body").innerHTML = n.entries.map((e) => `
         <tr><td class="mono">${esc(e.prefix_key)}${names[e.prefix_key] ? ` <span class="muted">${esc(names[e.prefix_key])}</span>` : ""}</td>
-        <td class="mono">${esc(e.target)}</td>
-        <td><span class="chip">${e.source === "git" ? "static backends.map" : "database (admin)"}</span></td></tr>`).join("")
-        || '<tr><td colspan="3" class="muted">No backend is routed yet.</td></tr>';
+        <td class="mono">${esc(e.upstream_url)}</td></tr>`).join("")
+        || '<tr><td colspan="2" class="muted">No backend is routed yet.</td></tr>';
     } catch (err) { toast(err.message, true); }
   }
   $("reload-nginx-view").addEventListener("click", loadNginx);
@@ -513,7 +500,7 @@
   // ---- sync
   async function loadSync() {
     try {
-      const [st, c] = await Promise.all([api("GET", "/admin/api/sync"), api("GET", "/admin/api/sync/conflicts")]);
+      const [{ data: st }, { data: c }] = await Promise.all([api("GET", "/admin/api/sync"), api("GET", "/admin/api/sync/conflicts")]);
       const lead = !st.sync_enabled ? '<span class="warn">Sync is off (SYNC_ENABLED=false).</span>'
         : st.leader ? '<span class="ok">● This replica is the sync leader.</span>'
         : '<span class="muted">○ Another replica is the sync leader (this one serves the API only).</span>';
@@ -522,7 +509,6 @@
         <tr><td class="mono">${esc(x.prefix_key)}</td><td>${esc(x.entity)}</td><td class="mono">${esc(x.epoch)}</td>
         <td class="num">${x.version}</td><td class="muted">${esc(fmtTime(x.updated_at))}</td></tr>`).join("")
         || '<tr><td colspan="5" class="muted">No stream synced yet.</td></tr>';
-      $("conflict-policy").textContent = `(policy: ${c.policy})`;
       const group = (title, g) => g.total === 0 ? `<div class="ok">${title}: none</div>` :
         `<div class="bad">${title}: ${g.total}</div><ul style="margin:4px 0 10px;padding-left:18px">` +
         g.items.map((i) => `<li><span class="mono">${esc(i.key)}</span> → ${i.backends.map((b) => `<span class="chip">${esc(b)}</span>`).join(" ")}</li>`).join("") +
@@ -551,8 +537,7 @@
              (r.conflicts ? `, <span class="bad">${r.conflicts} conflicting keys</span>` : "");
     }
     if (r.entries != null) {
-      return `${r.entries} map entries, ${r.changed ? "changed" : "unchanged"}` +
-             (r.skipped && r.skipped.length ? `, <span class="warn">${r.skipped.length} skipped</span>` : "");
+      return `${r.entries} map entries, ${r.changed ? "changed" : "unchanged"}`;
     }
     return "";
   }
@@ -560,11 +545,11 @@
   async function loadSchedules() {
     if (editingSchedule) return; // do not overwrite inputs while the user is typing
     try {
-      const r = await api("GET", "/admin/api/jobs");
-      $("sched-off").classList.toggle("hidden", r.scheduler_enabled);
-      $("sched-list").innerHTML = r.schedules.map((s) => `
+      const [{ data: jobs }, { data: sync }] = await Promise.all([api("GET", "/admin/api/jobs"), api("GET", "/admin/api/sync")]);
+      $("sched-off").classList.toggle("hidden", sync.sync_enabled);
+      $("sched-list").innerHTML = jobs.map((s) => `
         <div class="panel" data-name="${esc(s.name)}">
-          <h2>${esc(TASK_LABEL[s.name] || s.name)} ${s.running ? '<span class="chip warn">running…</span>' : ""}</h2>
+          <h2>${esc(JOB_LABEL[s.name] || s.name)} ${s.running ? '<span class="chip warn">running…</span>' : ""}</h2>
           <div class="row">
             <label class="inline"><input type="checkbox" class="s-enabled" ${s.enabled ? "checked" : ""}> Enabled</label>
             <label>Interval (seconds) <input type="number" class="s-interval" min="5" value="${s.interval_secs}" style="width:120px"></label>
@@ -602,8 +587,8 @@
     }
     if (e.target.classList.contains("s-run")) {
       try {
-        const r = await api("POST", `/admin/api/jobs/${name}/run`);
-        toast("Started, run #" + r.run_id);
+        const { data } = await api("POST", `/admin/api/jobs/${name}/run`);
+        toast("Started, run #" + data.run_id);
         editingSchedule = false;
         setTimeout(loadSchedules, 500);
       } catch (err) { toast(err.message, true); }
@@ -613,15 +598,16 @@
   // ---- runs
   const openRuns = new Set();
   async function loadRuns() {
-    const q = new URLSearchParams({ task: $("r-task").value, limit: "100" });
+    const q = new URLSearchParams({ limit: "100" });
+    if ($("r-job").value) q.set("job", $("r-job").value);
     try {
-      const r = await api("GET", "/admin/api/runs?" + q);
-      $("runs-body").innerHTML = r.runs.map((run) => {
+      const { data: runs } = await api("GET", "/admin/api/runs?" + q);
+      $("runs-body").innerHTML = runs.map((run) => {
         const st = run.status === "succeeded" ? "ok" : run.status === "failed" ? "bad" : "warn";
         const detail = run.result
           ? `<details data-id="${run.id}" ${openRuns.has(run.id) ? "open" : ""}><summary>${resultText(run.result)}</summary><pre>${esc(JSON.stringify(run.result, null, 2))}</pre></details>`
           : run.error ? `<span class="bad mono">${esc(run.error)}</span>` : "";
-        return `<tr><td>${run.id}</td><td class="mono">${esc(run.task)}</td><td>${esc(run.trigger)}</td>
+        return `<tr><td>${run.id}</td><td class="mono">${esc(run.job)}</td><td>${esc(run.trigger)}</td>
           <td class="${st}">${esc(run.status)}</td><td class="muted">${esc(fmtTime(run.started_at))}</td>
           <td class="num">${fmtDur(run.duration_ms)}</td><td>${detail}</td></tr>`;
       }).join("") || '<tr><td colspan="7" class="muted">No runs yet.</td></tr>';
@@ -632,11 +618,11 @@
     if (e.target.open) openRuns.add(id); else openRuns.delete(id);
   }, true);
   $("reload-runs").addEventListener("click", loadRuns);
-  $("r-task").addEventListener("change", loadRuns);
+  $("r-job").addEventListener("change", loadRuns);
 
   // ---- start
   if (auth) {
-    api("POST", "/admin/api/login").then((r) => showApp(r.username)).catch((err) => { toast(err.message, true); showLogin(); });
+    api("GET", "/admin/api/session").then(({ data }) => showApp(data.username)).catch((err) => { toast(err.message, true); showLogin(); });
   } else {
     showLogin();
   }

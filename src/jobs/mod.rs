@@ -1,16 +1,14 @@
 //! Background jobs.
 //!
-//!
-//! * [`Runner`] executes a job in the background and records each run in `rust_task_run`
-//!   (status, timing, JSON result).
-//! * [`run_scheduler`] checks `rust_periodic_task` every few seconds and starts jobs that are due.
+//! * [`Runner`] executes a job in the background and records each run in `job_run` (status, timing, result).
+//! * [`run_scheduler`] checks `job_schedule` every few seconds and starts jobs that are due.
 //!   Schedules are edited from the admin page; claiming a due run is atomic in the database, so several
 //!   replicas never start the same scheduled run twice.
 //! * A job never overlaps itself in one process.
 //!
-//! Jobs: `sync_all_backend_users` / `sync_all_backend_agents` (safety-net check of the routing streams:
-//! resync on a changed epoch or count drift; the continuous sync is the long-poll loop in [`stream`]),
-//! plus `render_nginx_map` (regenerates the nginx map from the database).
+//! Jobs: `check_users_stream` / `check_agents_stream` (safety net of the routing streams: resync on a changed
+//! epoch or digest drift; the continuous sync is the long-poll loop in [`stream`]) and `write_nginx_map`
+//! (rewrites the nginx map from the registry).
 
 use std::{
     collections::HashSet,
@@ -35,7 +33,7 @@ use crate::{
 
 use self::sync::{Syncer, Task};
 
-const KEEP_RUNS_PER_TASK: i64 = 500;
+const KEEP_RUNS_PER_JOB: i64 = 500;
 const SCHEDULER_TICK: Duration = Duration::from_secs(2);
 const NGINX_MAP_DEFAULT_SECS: i32 = 60;
 
@@ -51,7 +49,7 @@ impl Job {
     pub fn name(self) -> &'static str {
         match self {
             Job::Sync(t) => t.name(),
-            Job::NginxMap => "render_nginx_map",
+            Job::NginxMap => "write_nginx_map",
         }
     }
 
@@ -60,18 +58,18 @@ impl Job {
     }
 }
 
-/// Rewrites the generated nginx map from the database (no reload request: the watcher reloads on change).
-pub async fn render_nginx_map(pool: &PgPool, maps: &NginxMaps) -> Result<Value, String> {
+/// Rewrites the nginx map from the registry (the nginx watcher reloads when it changes).
+pub async fn write_nginx_map(pool: &PgPool, maps: &NginxMaps) -> Result<Value, String> {
     let _guard = maps.lock.lock().await;
     let rows = routed_backends(pool).await.map_err(|e| format!("database: {e}"))?;
-    maps.write_generated(&rows)
+    maps.write(&rows)
 }
 
-/// Same as [`render_nginx_map`], and records the run in the history ("Run history" tab) with `trigger`
-/// (`admin` after a backend change, `force` for "Force reload nginx", `startup`).
-pub async fn render_nginx_map_recorded(pool: &PgPool, maps: &NginxMaps, trigger: &str) -> Result<Value, String> {
+/// Same as [`write_nginx_map`], and records the run in the history with `trigger` (`admin` after a backend
+/// change, `manual` for a forced reload, `startup`).
+pub async fn write_nginx_map_recorded(pool: &PgPool, maps: &NginxMaps, trigger: &str) -> Result<Value, String> {
     let run_id = jobdb::insert_run(pool, Job::NginxMap.name(), trigger).await.ok();
-    let outcome = render_nginx_map(pool, maps).await;
+    let outcome = write_nginx_map(pool, maps).await;
     if let Some(id) = run_id {
         let saved = match &outcome {
             Ok(v) => jobdb::finish_run(pool, id, "succeeded", Some(v), None).await,
@@ -103,7 +101,7 @@ impl Runner {
     async fn execute(&self, job: Job) -> Result<Value, String> {
         match job {
             Job::Sync(t) => self.syncer.sync_all(t, false).await.map_err(|e| format!("database: {e}")),
-            Job::NginxMap => render_nginx_map(&self.pool, &self.maps).await,
+            Job::NginxMap => write_nginx_map(&self.pool, &self.maps).await,
         }
     }
 
@@ -121,28 +119,28 @@ impl Runner {
         };
         let me = self.clone();
         tokio::spawn(async move {
-            tracing::debug!(task = job.name(), trigger, run_id, "task started");
+            tracing::debug!(job = job.name(), trigger, run_id, "job started");
             let outcome = me.execute(job).await;
             let saved = match &outcome {
                 Ok(result) => {
                     // The nginx map job runs every minute: keep its success logs quiet.
                     if job == Job::NginxMap && result.get("changed") != Some(&json!(true)) {
-                        tracing::debug!(task = job.name(), run_id, "task succeeded (no change)");
+                        tracing::debug!(job = job.name(), run_id, "job succeeded (no change)");
                     } else {
-                        tracing::info!(task = job.name(), run_id, result = %result, "task succeeded");
+                        tracing::info!(job = job.name(), run_id, result = %result, "job succeeded");
                     }
                     jobdb::finish_run(&me.pool, run_id, "succeeded", Some(result), None).await
                 }
                 Err(e) => {
-                    tracing::error!(task = job.name(), run_id, "task failed: {e}");
+                    tracing::error!(job = job.name(), run_id, "job failed: {e}");
                     jobdb::finish_run(&me.pool, run_id, "failed", None, Some(e.as_str())).await
                 }
             };
             if let Err(e) = saved {
-                tracing::error!(run_id, "could not save task result: {e}");
+                tracing::error!(run_id, "could not save the job result: {e}");
             }
-            if let Err(e) = jobdb::prune_runs(&me.pool, job.name(), KEEP_RUNS_PER_TASK).await {
-                tracing::warn!("could not prune task runs: {e}");
+            if let Err(e) = jobdb::prune_runs(&me.pool, job.name(), KEEP_RUNS_PER_JOB).await {
+                tracing::warn!("could not prune job runs: {e}");
             }
             me.running.lock().unwrap().remove(job.name());
         });
@@ -153,13 +151,13 @@ impl Runner {
 /// Creates the schedule rows on first start and closes runs left open by a previous process.
 pub async fn init(pool: &PgPool, s: &Settings) -> Result<(), sqlx::Error> {
     let secs = |d: Duration| d.as_secs().clamp(1, i32::MAX as u64) as i32;
-    jobdb::seed_schedule(pool, Task::Users.name(), Some(Task::Users.celery_name()), secs(s.user_sync_interval)).await?;
-    jobdb::seed_schedule(pool, Task::Agents.name(), Some(Task::Agents.celery_name()), secs(s.agent_sync_interval))
-        .await?;
-    jobdb::seed_schedule(pool, Job::NginxMap.name(), None, NGINX_MAP_DEFAULT_SECS).await?;
+    for task in Task::ALL {
+        jobdb::seed_schedule(pool, task.name(), secs(s.sync_check_interval)).await?;
+    }
+    jobdb::seed_schedule(pool, Job::NginxMap.name(), NGINX_MAP_DEFAULT_SECS).await?;
     let n = jobdb::mark_interrupted_runs(pool).await?;
     if n > 0 {
-        tracing::warn!(runs = n, "marked unfinished task runs from a previous process as failed");
+        tracing::warn!(runs = n, "marked unfinished job runs of a previous process as failed");
     }
     Ok(())
 }
@@ -187,11 +185,11 @@ pub async fn run_scheduler(pool: PgPool, runner: Arc<Runner>, cancel: Cancellati
             match jobdb::claim_schedule(&pool, &name).await {
                 Ok(true) => {
                     if let Err(e) = runner.start(job, "schedule").await {
-                        tracing::error!(task = %name, "scheduler: cannot start task: {e}");
+                        tracing::error!(job = %name, "scheduler: cannot start job: {e}");
                     }
                 }
                 Ok(false) => {} // another replica took it, or the schedule changed
-                Err(e) => tracing::warn!(task = %name, "scheduler: cannot claim schedule: {e}"),
+                Err(e) => tracing::warn!(job = %name, "scheduler: cannot claim schedule: {e}"),
             }
         }
     }

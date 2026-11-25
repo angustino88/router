@@ -4,20 +4,18 @@ use std::{env, fs, path::Path, time::Duration};
 
 use anyhow::{bail, Context, Result};
 
-pub const DEFAULT_AAD_AUDIENCE: &str = "eb57f92a-fe50-46b7-b0d8-775cb6b9bdc6";
-pub const DEFAULT_AAD_JWKS_URL: &str =
-    "https://login.microsoftonline.com/0ae51e19-07c8-4e4b-bb6d-648ee58410f4/discovery/v2.0/keys";
-
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// Address the HTTP API listens on. `LISTEN_ADDR`, else `0.0.0.0:$HOST_PORT`, else `0.0.0.0:8000`.
+    /// Address the HTTP API listens on (`LISTEN_ADDR`, default `0.0.0.0:8000`).
     pub listen_addr: String,
     pub database_url: String,
     pub db_max_connections: u32,
     /// Create or upgrade the tables at start-up.
     pub auto_migrate: bool,
 
+    /// Expected `aud` of users' ID tokens: the frontend's application (client) ID (`AAD_AUDIENCE`).
     pub aad_audience: String,
+    /// Signing keys of the tenant (`AAD_JWKS_URL`, default derived from `AAD_TENANT_ID`).
     pub aad_jwks_url: String,
     /// How long fetched signing keys are trusted before a background refresh.
     pub aad_jwks_cache_ttl: Duration,
@@ -35,33 +33,18 @@ pub struct Settings {
 
     /// Master switch for the scheduler and the stream sync. Schedules live in the database.
     pub sync_enabled: bool,
-    /// Initial intervals, used only the first time the schedule rows are created
-    /// (a legacy Celery beat interval found in the database takes precedence).
-    pub user_sync_interval: Duration,
-    pub agent_sync_interval: Duration,
+    /// Interval of the stream check jobs when their schedule is first created (`SYNC_CHECK_INTERVAL`).
+    pub sync_check_interval: Duration,
 
-    /// Git-managed nginx map (read-only here), e.g. the mounted `deploy/nginx/prod/tenants/backends.map`.
-    pub nginx_map_file: String,
-    /// Shared volume with the nginx container: generated map, reload request, nginx status.
-    pub nginx_admin_dir: String,
+    /// Directory shared with the nginx container: backend map, reload request, nginx status (`NGINX_MAP_DIR`).
+    pub nginx_map_dir: String,
 
     /// Admin account for /admin/ and /admin/api/*. Both must be set, otherwise admin is disabled.
     pub admin_username: Option<String>,
     pub admin_password: Option<String>,
 
-    /// What the routing API answers when a key is claimed by more than one backend (`ROUTING_CONFLICT_POLICY`).
-    pub conflict_policy: ConflictPolicy,
     /// Only one replica runs the stream sync and the scheduler (PostgreSQL advisory lock, `LEADER_ELECTION`).
     pub leader_election: bool,
-}
-
-/// Routing-spec CNS-6: a key claimed by several backends is a conflict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConflictPolicy {
-    /// Resolve to nothing (HTTP 409) and log a warning. Default, as required by the backend spec.
-    Reject,
-    /// Legacy behaviour: return every claiming backend and let the client choose.
-    All,
 }
 
 /// Sync credential (routing-spec section 10.3).
@@ -86,12 +69,15 @@ impl Settings {
     pub fn from_env() -> Result<Settings> {
         load_env_file();
 
-        let listen_addr = match var("LISTEN_ADDR") {
-            Some(a) => a,
-            None => format!("0.0.0.0:{}", var("HOST_PORT").unwrap_or_else(|| "8000".into())),
+        let database_url = var("DATABASE_URL").context("DATABASE_URL is not set")?;
+        if !(database_url.starts_with("postgres://") || database_url.starts_with("postgresql://")) {
+            bail!("DATABASE_URL must be a PostgreSQL URL (postgres://user:pass@host:5432/db)");
+        }
+        let aad_jwks_url = match (var("AAD_JWKS_URL"), var("AAD_TENANT_ID")) {
+            (Some(url), _) => url,
+            (None, Some(tenant)) => format!("https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys"),
+            (None, None) => bail!("AAD_TENANT_ID (or AAD_JWKS_URL) is not set"),
         };
-
-        let database_url = normalize_db_url(&var("DATABASE_URL").context("DATABASE_URL is not set")?)?;
 
         let ca_bundle = match var("CA_BUNDLE") {
             Some(p) if p.is_empty() => None,
@@ -103,13 +89,13 @@ impl Settings {
         };
 
         let settings = Settings {
-            listen_addr,
+            listen_addr: var("LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:8000".into()),
             database_url,
             db_max_connections: parse("DB_MAX_CONNECTIONS", 20u32)?,
             auto_migrate: parse_bool("AUTO_MIGRATE", true)?,
 
-            aad_audience: var("AAD_AUDIENCE").unwrap_or_else(|| DEFAULT_AAD_AUDIENCE.into()),
-            aad_jwks_url: var("AAD_JWKS_URL").unwrap_or_else(|| DEFAULT_AAD_JWKS_URL.into()),
+            aad_audience: var("AAD_AUDIENCE").context("AAD_AUDIENCE (the frontend's client ID) is not set")?,
+            aad_jwks_url,
             aad_jwks_cache_ttl: Duration::from_secs(parse("AAD_JWKS_CACHE_TTL", 3600u64)?),
             ca_bundle,
 
@@ -124,21 +110,14 @@ impl Settings {
             sync_longpoll_wait: parse("SYNC_LONGPOLL_WAIT", 30u64)?,
 
             sync_enabled: parse_bool("SYNC_ENABLED", true)?,
-            user_sync_interval: Duration::from_secs(parse("USER_SYNC_INTERVAL", 300u64)?),
-            agent_sync_interval: Duration::from_secs(parse("AGENT_SYNC_INTERVAL", 60u64)?),
+            sync_check_interval: Duration::from_secs(parse("SYNC_CHECK_INTERVAL", 3600u64)?),
 
-            nginx_map_file: var("NGINX_MAP_FILE").unwrap_or_else(|| "/nginx-tenants/backends.map".into()),
-            nginx_admin_dir: var("NGINX_ADMIN_DIR").unwrap_or_else(|| "/nginx-admin".into()),
+            nginx_map_dir: var("NGINX_MAP_DIR").unwrap_or_else(|| "/nginx-map".into()),
 
             // Not trimmed beyond `var`: spaces at the ends of a password in .env are almost always a mistake.
             admin_username: var("ADMIN_USERNAME"),
             admin_password: var("ADMIN_PASSWORD"),
 
-            conflict_policy: match var("ROUTING_CONFLICT_POLICY").as_deref().map(str::to_ascii_lowercase).as_deref() {
-                None | Some("reject") => ConflictPolicy::Reject,
-                Some("all") => ConflictPolicy::All,
-                Some(v) => bail!("ROUTING_CONFLICT_POLICY={v:?} must be reject or all"),
-            },
             leader_election: parse_bool("LEADER_ELECTION", true)?,
         };
         if settings.sync_longpoll_wait > 30 {
@@ -222,19 +201,6 @@ fn parse_bool(name: &str, default: bool) -> Result<bool> {
     }
 }
 
-/// Accepts `psql://`, `pgsql://`, `postgis://`, `postgresql://` and `postgres://`; sqlx wants the last two.
-fn normalize_db_url(url: &str) -> Result<String> {
-    for (from, to) in [("psql://", "postgres://"), ("pgsql://", "postgres://"), ("postgis://", "postgres://")] {
-        if let Some(rest) = url.strip_prefix(from) {
-            return Ok(format!("{to}{rest}"));
-        }
-    }
-    if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        return Ok(url.to_string());
-    }
-    bail!("DATABASE_URL must be a PostgreSQL URL (postgres://user:pass@host:5432/db)")
-}
-
 /// Reads `$ENV_FILE` (default `./.env`) like `environ.Env.read_env`: `KEY=value` lines,
 /// optional `export `, optional quotes; variables already set in the environment win.
 fn load_env_file() {
@@ -290,12 +256,5 @@ mod tests {
                 ("D".into(), "v".into()),
             ]
         );
-    }
-
-    #[test]
-    fn db_url_schemes() {
-        assert_eq!(normalize_db_url("psql://u:p@h/db").unwrap(), "postgres://u:p@h/db");
-        assert_eq!(normalize_db_url("postgresql://u@h/db").unwrap(), "postgresql://u@h/db");
-        assert!(normalize_db_url("sqlite:///x.db").is_err());
     }
 }

@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use super::sync::{ErrorKind, PollOutcome, SyncError, Syncer, Task};
 use crate::db::{
     backends::{self as backend_db, Backend},
-    mappings,
+    claims,
 };
 
 const BACKEND_REFRESH: Duration = Duration::from_secs(15);
@@ -137,7 +137,7 @@ async fn worker(syncer: Arc<Syncer>, backend: Backend, task: Task, cancel: Cance
 
 /// One round: resync without a cursor, else one long-poll (and a resync when the backend asks for it).
 async fn step(syncer: &Syncer, backend: &Backend, task: Task) -> Result<(), SyncError> {
-    let Some(cursor) = mappings::get_cursor(&syncer.pool, backend.id, task.kind()).await? else {
+    let Some(cursor) = claims::get_cursor(&syncer.pool, backend.id, task.kind()).await? else {
         syncer.resync(backend, task).await?;
         return Ok(());
     };
@@ -147,7 +147,7 @@ async fn step(syncer: &Syncer, backend: &Backend, task: Task) -> Result<(), Sync
             crate::metrics::inc("router_sync_pages_applied_total", &[("entity", task.entity())]);
             tracing::info!(
                 backend = %backend.prefix_key, entity = task.entity(), version = to.version, has_more,
-                created = counts.created, updated = counts.updated, deactivated = counts.deactivated,
+                added = counts.added, removed = counts.removed,
                 "stream changes applied"
             );
         }
